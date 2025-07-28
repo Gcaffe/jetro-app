@@ -169,51 +169,39 @@ class MovimientoCreate(BaseModel):
     mes: int
     año: int
     importe: float
-    origen: str    
+    origen: str
+    saldoCaja: float = 0      # ✅ NUEVO
+    saldoBanco: float = 0     # ✅ NUEVO
+    moDona: Optional[int] = 0      # Para donantes
+    moPers: Optional[int] = 0      # Para fieles/pastores
+    moSedeDes: Optional[int] = 0  # Para locales
+
+
+# ================== MODELO PARA CREAR CIERRE =======================
+class CierreCreate(BaseModel):
+    sede: int
+    anyo: int
+    mes: int
+    saldoCaja: float
+    saldoBanco: float
+    usuario: str    
+
+# ================== MODELO PARA CREAR CIERRE TEMPORAL =======================
+class CierreCreateTemporal(BaseModel):
+    sede: int
+    anyo: int
+    mes: int
+    usuario: str
 
 # ================== ENDPOINTS PARA IGLESIAS ==================
 @app.get("/locales/{sede_ids}")
-def obtener_locales(sede_ids: str, auth=Depends(get_current_user)):
+def obtener_locales(sede_ids: str, auth=Depends(get_current_user), test_mode: bool = False):
     """Obtener todos los locales de las sedes especificadas"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Obteniendo locales para sedes: {sede_ids}")
-        conn = conectar_db()
-        cursor = conn.cursor(pymysql.cursors.DictCursor)
-        
-        # Usar la misma lógica que ya tienes en login.py
-        if sede_ids == "999":
-            cursor.execute("SELECT * FROM locales WHERE LoSituacion=1 ORDER BY LoNombre")
-        elif "," in sede_ids:
-            ids = tuple(sede_ids.split(","))
-            placeholders = ",".join(["%s"] * len(ids))
-            sql = f"SELECT * FROM locales WHERE LoSituacion=1 AND LoCod IN ({placeholders}) ORDER BY LoNombre"
-            cursor.execute(sql, ids)
-        else:
-            cursor.execute("SELECT * FROM locales WHERE LoSituacion=1 AND LoCod = %s ORDER BY LoNombre", (sede_ids,))
-        
-        locales = cursor.fetchall()
-        print(f"✅ Encontrados {len(locales)} locales")
-        return locales
-        
-    except Exception as e:
-        print(f"❌ ERROR obteniendo locales: {e}")
-        raise HTTPException(status_code=500, detail=f"Error al obtener locales: {str(e)}")
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-@app.get("/locales/{sede_ids}")
-def obtener_locales(sede_ids: str, auth=Depends(get_current_user)):
-    """Obtener todos los locales de las sedes especificadas"""
-    conn = None
-    cursor = None
-    try:
-        print(f"▶️ Obteniendo locales para sedes: {sede_ids}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)  # Corregido para PyMySQL
         
         # Usar la misma lógica que ya tienes en login.py
@@ -285,14 +273,15 @@ class ReporteDiezmosOfrendasRequest(BaseModel):
     fechaFinal: str
     soloDomingos: bool = False
 
+# ================== ENDPOINT PARA DETALLES DEL LOCAL ==================
 @app.get("/locales/detalle/{local_id}")
-def obtener_local_detalle(local_id: int, auth=Depends(get_current_user)):
+def obtener_local_detalle(local_id: int, auth=Depends(get_current_user), test_mode: bool = False):
     """Obtener un local específico por ID"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Obteniendo detalle del local ID: {local_id}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)  # Corregido para PyMySQL
         
         cursor.execute("SELECT * FROM locales WHERE LoID = %s", (local_id,))
@@ -315,12 +304,13 @@ def obtener_local_detalle(local_id: int, auth=Depends(get_current_user)):
         if conn:
             conn.close()
 
+# ================== ENDPOINT PARA NUEVO CODIGO DE LOCAL ==================
 @app.get("/nuevo-codigo-local")
-def obtener_nuevo_codigo(auth=Depends(get_current_user)):
+def obtener_nuevo_codigo(auth=Depends(get_current_user), test_mode: bool = False):
     conn = None
     cursor = None
     try:
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor()
         cursor.execute("SELECT MAX(LoCod)+1 as nuevoCodigo FROM locales")
         resultado = cursor.fetchone()
@@ -331,15 +321,16 @@ def obtener_nuevo_codigo(auth=Depends(get_current_user)):
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
-        
+
+# ================== ENDPOINT PARA CREAR UN LOCAL ==================        
 @app.post("/locales")
-def crear_local(local: LocalCreate, auth=Depends(get_current_user)):
+def crear_local(local: LocalCreate, auth=Depends(get_current_user), test_mode: bool = False):
     """Crear un nuevo local"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Creando nuevo local: {local.LoNombre}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)  # Corregido para PyMySQL
         
         # Verificar si el código ya existe
@@ -385,14 +376,15 @@ def crear_local(local: LocalCreate, auth=Depends(get_current_user)):
         if conn:
             conn.close()
 
+# ================== ENDPOINT PARA ACTUALIZAR UN LOCAL ==================
 @app.put("/locales/{local_id}")
-def actualizar_local(local_id: int, local: LocalUpdate, auth=Depends(get_current_user)):
+def actualizar_local(local_id: int, local: LocalUpdate, auth=Depends(get_current_user), test_mode: bool = False):
     """Actualizar un local existente"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Actualizando local ID: {local_id}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)  # Corregido para PyMySQL
         
         # Verificar que el local existe
@@ -443,14 +435,15 @@ def actualizar_local(local_id: int, local: LocalUpdate, auth=Depends(get_current
         if conn:
             conn.close()
 
+# ================== ENDPOINT PARA ELIMINAR UN LOCAL ==================
 @app.delete("/locales/{local_id}")
-def eliminar_local(local_id: int, auth=Depends(get_current_user)):
+def eliminar_local(local_id: int, auth=Depends(get_current_user), test_mode: bool = False):
     """Eliminar un local (soft delete - cambiar situación a 0)"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Eliminando local ID: {local_id}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)  # Corregido para PyMySQL
         
         # Verificar que el local existe
@@ -479,13 +472,13 @@ def eliminar_local(local_id: int, auth=Depends(get_current_user)):
 
 # ================== ENDPOINTS PARA FIELES ==================
 @app.get("/fieles/{sede_id}")
-def obtener_fieles(sede_id: str, auth=Depends(get_current_user)):
+def obtener_fieles(sede_id: str, auth=Depends(get_current_user), test_mode: bool = False):
     """Obtener todos los fieles de la sede especificada"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Obteniendo fieles para sede: {sede_id}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
         if sede_id == "999":
@@ -506,14 +499,15 @@ def obtener_fieles(sede_id: str, auth=Depends(get_current_user)):
         if conn:
             conn.close()
 
+# ================== ENDPOINT PARA OBTERNE DETALLES DEL FIEL ==================
 @app.get("/fieles/detalle/{fiel_id}")
-def obtener_fiel_detalle(fiel_id: int, auth=Depends(get_current_user)):
+def obtener_fiel_detalle(fiel_id: int, auth=Depends(get_current_user), test_mode: bool = False):
     """Obtener un fiel específico por ID"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Obteniendo detalle del fiel ID: {fiel_id}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
         cursor.execute("SELECT * FROM fieles WHERE fiID = %s", (fiel_id,))
@@ -536,13 +530,14 @@ def obtener_fiel_detalle(fiel_id: int, auth=Depends(get_current_user)):
         if conn:
             conn.close()
 
+# ================== ENDPOINT PARA OBTENER NUEVO CODIGO PARA FIEL ==================
 @app.get("/nuevo-codigo-fiel")
-def obtener_nuevo_codigo_fiel(auth=Depends(get_current_user)):
+def obtener_nuevo_codigo_fiel(auth=Depends(get_current_user), test_mode: bool = False):
     """Obtener el siguiente código disponible para fiel"""
     conn = None
     cursor = None
     try:
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor()
         cursor.execute("SELECT MAX(fiCod)+1 as nuevoCodigo FROM fieles")
         resultado = cursor.fetchone()
@@ -554,14 +549,15 @@ def obtener_nuevo_codigo_fiel(auth=Depends(get_current_user)):
         if cursor: cursor.close()
         if conn: conn.close()
 
+# ================== ENDPOINT PARA CREAR UN FIEL ==================
 @app.post("/fieles")
-def crear_fiel(fiel: FielCreate, auth=Depends(get_current_user)):
+def crear_fiel(fiel: FielCreate, auth=Depends(get_current_user), test_mode: bool = False):
     """Crear un nuevo fiel"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Creando nuevo fiel: {fiel.fiNombres} {fiel.fiApellidos}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
         # Verificar si el código ya existe
@@ -615,14 +611,15 @@ def crear_fiel(fiel: FielCreate, auth=Depends(get_current_user)):
         if conn:
             conn.close()
 
+# ================== ENDPOINT PARA ACTUALIZAR FIEL ==================
 @app.put("/fieles/{fiel_id}")
-def actualizar_fiel(fiel_id: int, fiel: FielUpdate, auth=Depends(get_current_user)):
+def actualizar_fiel(fiel_id: int, fiel: FielUpdate, auth=Depends(get_current_user), test_mode: bool = False):
     """Actualizar un fiel existente"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Actualizando fiel ID: {fiel_id}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
         # Verificar que el fiel existe
@@ -682,14 +679,15 @@ def actualizar_fiel(fiel_id: int, fiel: FielUpdate, auth=Depends(get_current_use
         if conn:
             conn.close()
 
+# ================== ENDPOINT PARA ELIMINAR FIEL ==================
 @app.delete("/fieles/{fiel_id}")
-def eliminar_fiel(fiel_id: int, auth=Depends(get_current_user)):
+def eliminar_fiel(fiel_id: int, auth=Depends(get_current_user), test_mode: bool = False):
     """Eliminar un fiel (soft delete - cambiar situación a 0)"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Eliminando fiel ID: {fiel_id}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
         # Verificar que el fiel existe
@@ -718,7 +716,7 @@ def eliminar_fiel(fiel_id: int, auth=Depends(get_current_user)):
 
 # ================== ENDPOINTS PARA USUARIOS ==================
 @app.get("/usuarios")
-def obtener_usuarios(auth=Depends(get_current_user)):
+def obtener_usuarios(auth=Depends(get_current_user), test_mode: bool = False):
     """Obtener todos los usuarios - Solo administradores"""
     conn = None
     cursor = None
@@ -727,7 +725,7 @@ def obtener_usuarios(auth=Depends(get_current_user)):
         verificar_admin(auth)
         
         print("▶️ Obteniendo usuarios")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
         cursor.execute("""
@@ -752,8 +750,9 @@ def obtener_usuarios(auth=Depends(get_current_user)):
         if conn:
             conn.close()
 
+# ================== ENDPOINT PARA OBTENER DETALLE DEL USUARIO ==================
 @app.get("/usuarios/detalle/{usuario_id}")
-def obtener_usuario_detalle(usuario_id: int, auth=Depends(get_current_user)):
+def obtener_usuario_detalle(usuario_id: int, auth=Depends(get_current_user), test_mode: bool = False):
     """Obtener un usuario específico por ID - Solo administradores"""
     conn = None
     cursor = None
@@ -761,7 +760,7 @@ def obtener_usuario_detalle(usuario_id: int, auth=Depends(get_current_user)):
         verificar_admin(auth)
         
         print(f"▶️ Obteniendo detalle del usuario ID: {usuario_id}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
         cursor.execute("""
@@ -789,15 +788,16 @@ def obtener_usuario_detalle(usuario_id: int, auth=Depends(get_current_user)):
         if conn:
             conn.close()
 
+# ================== ENDPOINT PARA OBTENER NUEVO CODIGO DE USUARIO ==================
 @app.get("/nuevo-codigo-usuario")
-def obtener_nuevo_codigo_usuario(auth=Depends(get_current_user)):
+def obtener_nuevo_codigo_usuario(auth=Depends(get_current_user), test_mode: bool = False):
     """Obtener el siguiente código disponible para usuario"""
     conn = None
     cursor = None
     try:
         verificar_admin(auth)
         
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor()
         
         # Buscar el siguiente código alfanumérico disponible
@@ -823,8 +823,9 @@ def obtener_nuevo_codigo_usuario(auth=Depends(get_current_user)):
         if cursor: cursor.close()
         if conn: conn.close()
 
+# ================== ENDPOINT PARA CREAR USUARIO ==================
 @app.post("/usuarios")
-def crear_usuario(usuario: UsuarioCreate, auth=Depends(get_current_user)):
+def crear_usuario(usuario: UsuarioCreate, auth=Depends(get_current_user), test_mode: bool = False):
     """Crear un nuevo usuario - Solo administradores"""
     conn = None
     cursor = None
@@ -832,7 +833,7 @@ def crear_usuario(usuario: UsuarioCreate, auth=Depends(get_current_user)):
         verificar_admin(auth)
         
         print(f"▶️ Creando nuevo usuario: {usuario.UsNombre}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
         # Verificar si el código ya existe
@@ -887,8 +888,9 @@ def crear_usuario(usuario: UsuarioCreate, auth=Depends(get_current_user)):
         if conn:
             conn.close()
 
+# ================== ENDPOINT PARA ACTUALIZAR USUARIO ==================
 @app.put("/usuarios/{usuario_id}")
-def actualizar_usuario(usuario_id: int, usuario: UsuarioUpdate, auth=Depends(get_current_user)):
+def actualizar_usuario(usuario_id: int, usuario: UsuarioUpdate, auth=Depends(get_current_user), test_mode: bool = False):
     """Actualizar un usuario existente - Solo administradores"""
     conn = None
     cursor = None
@@ -896,7 +898,7 @@ def actualizar_usuario(usuario_id: int, usuario: UsuarioUpdate, auth=Depends(get
         verificar_admin(auth)
         
         print(f"▶️ Actualizando usuario ID: {usuario_id}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
         # Verificar que el usuario existe
@@ -955,8 +957,9 @@ def actualizar_usuario(usuario_id: int, usuario: UsuarioUpdate, auth=Depends(get
         if conn:
             conn.close()
 
+# ================== ENDPOINT PARA ELIMINAR USUARIO ==================
 @app.delete("/usuarios/{usuario_id}")
-def eliminar_usuario(usuario_id: int, auth=Depends(get_current_user)):
+def eliminar_usuario(usuario_id: int, auth=Depends(get_current_user), test_mode: bool = False):
     """Eliminar un usuario (soft delete - cambiar UsActivo a 0)"""
     conn = None
     cursor = None
@@ -964,7 +967,7 @@ def eliminar_usuario(usuario_id: int, auth=Depends(get_current_user)):
         verificar_admin(auth)
         
         print(f"▶️ Eliminando usuario ID: {usuario_id}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
         # Verificar que el usuario existe
@@ -995,9 +998,9 @@ def eliminar_usuario(usuario_id: int, auth=Depends(get_current_user)):
         if conn:
             conn.close()
 
-# Endpoint adicional para cambiar contraseña
+# ================== ENDPOINT PARA CAMBIAR CONTRASEÑA ==================
 @app.put("/usuarios/{usuario_id}/password")
-def cambiar_password(usuario_id: int, nueva_password: str, auth=Depends(get_current_user)):
+def cambiar_password(usuario_id: int, nueva_password: str, auth=Depends(get_current_user), test_mode: bool = False):
     """Cambiar contraseña de un usuario - Solo administradores o el propio usuario"""
     conn = None
     cursor = None
@@ -1007,7 +1010,7 @@ def cambiar_password(usuario_id: int, nueva_password: str, auth=Depends(get_curr
             raise HTTPException(status_code=403, detail="No tienes permisos para cambiar esta contraseña")
         
         print(f"▶️ Cambiando contraseña del usuario ID: {usuario_id}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor()
         
         # Verificar que el usuario existe
@@ -1041,14 +1044,14 @@ def cambiar_password(usuario_id: int, nueva_password: str, auth=Depends(get_curr
 
 # ================== ENDPOINTS PARA REPORTES ==================
 @app.post("/api/reportes/ingresos-gastos")
-async def obtener_ingresos_gastos(request: ReporteIngresosGastosRequest):
+async def obtener_ingresos_gastos(request: ReporteIngresosGastosRequest, test_mode: bool = False):
     print("=== INICIO REPORTE INGRESOS-GASTOS ===")
     print(f"Datos recibidos: {request}")
     
     try:
         # Obtener conexión a la BD
         print("Intentando conectar a la BD...")
-        connection = conectar_db()
+        connection = conectar_db(test_mode=test_mode)
         print("Conexión exitosa")
         
         # Para pymysql, usar DictCursor
@@ -1137,14 +1140,14 @@ async def obtener_ingresos_gastos(request: ReporteIngresosGastosRequest):
         print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
-# Nuevo endpoint para Diezmos y Ofrendas
+# ================== ENDPOINT PARA DIEZMOS Y OFRENDAS ==================
 @app.post("/api/reportes/diezmos-ofrendas")
-async def obtener_diezmos_ofrendas(request: ReporteDiezmosOfrendasRequest):
+async def obtener_diezmos_ofrendas(request: ReporteDiezmosOfrendasRequest, test_mode: bool = False):
     print("=== INICIO REPORTE DIEZMOS Y OFRENDAS ===")
     print(f"Datos recibidos: {request}")
     
     try:
-        connection = conectar_db()
+        connection = conectar_db(test_mode=test_mode)
         cursor = connection.cursor(pymysql.cursors.DictCursor)
         
         # Consulta SQL según especificaciones del PDF
@@ -1153,7 +1156,7 @@ async def obtener_diezmos_ofrendas(request: ReporteDiezmosOfrendasRequest):
             sql_query = """
                 SELECT 
                     m.MoFecha,
-                    o.OpNombre,
+                    'DIEZMOS+OFRENDAS' AS OpNombre,
                     'Culto Dominical' AS MoDesc,
                     SUM(m.MoCChica) AS Caja,
                     SUM(m.MoImporte) AS Banco,
@@ -1166,7 +1169,7 @@ async def obtener_diezmos_ofrendas(request: ReporteDiezmosOfrendasRequest):
                 AND m.MoFecha >= %s 
                 AND m.MoFecha <= %s
                 AND DAYOFWEEK(m.MoFecha) = 1
-                GROUP BY m.MoFecha, o.OpCod 
+                GROUP BY m.MoFecha
                 ORDER BY m.MoFecha, o.OpCod
             """
         else:
@@ -1229,13 +1232,13 @@ async def obtener_diezmos_ofrendas(request: ReporteDiezmosOfrendasRequest):
 
 # ================== ENDPOINT PARA CARGA SEGUNDO NIVEL ==================
 @app.get("/segundo-nivel", response_model=SegundoNivelResult)
-def obtener_segundo_nivel(tipo: int, sede: int, auth=Depends(get_current_user)):
+def obtener_segundo_nivel(tipo: int, sede: int, auth=Depends(get_current_user), test_mode: bool = False):
     """Obtener opciones de segundo nivel según el tipo de operación y sede"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Obteniendo segundo nivel: tipo={tipo}, sede={sede}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
         query = """
@@ -1265,13 +1268,13 @@ def obtener_segundo_nivel(tipo: int, sede: int, auth=Depends(get_current_user)):
 
 # ================== ENDPOINT PARA CARGA TERCEL NIVEL ==================
 @app.get("/tercer-nivel")
-def obtener_tercer_nivel(accion: str, sede: int, auth=Depends(get_current_user)):
+def obtener_tercer_nivel(accion: str, sede: int, auth=Depends(get_current_user), test_mode: bool = False):
     """Obtener opciones de tercer nivel según MnuSigAccion"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Obteniendo tercer nivel: accion={accion}, sede={sede}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
         # Determinar la consulta según MnuSigAccion
@@ -1338,13 +1341,13 @@ def obtener_tercer_nivel(accion: str, sede: int, auth=Depends(get_current_user))
 
 # ================== ENDPOINT PARA CARGA DE MOVIMIENTOS ==================
 @app.get("/movimientos")
-def obtener_movimientos(año: int, mes: int, sede: int, auth=Depends(get_current_user)):
+def obtener_movimientos(año: int, mes: int, sede: int, auth=Depends(get_current_user), test_mode: bool = False):
     """Obtener movimientos de un período específico"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Obteniendo movimientos: año={año}, mes={mes}, sede={sede}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
         # SQL para obtener movimientos del mes/año/sede
@@ -1377,13 +1380,13 @@ def obtener_movimientos(año: int, mes: int, sede: int, auth=Depends(get_current
 
 # ================== ENDPOINT PARA GRABAR DE MOVIMIENTOS ==================
 @app.post("/grabar-movimiento")
-def grabar_movimiento(movimiento: MovimientoCreate, auth=Depends(get_current_user)):
+def grabar_movimiento(movimiento: MovimientoCreate, auth=Depends(get_current_user), test_mode: bool = False):
     """Grabar un nuevo movimiento"""
     conn = None
     cursor = None
     try:
         print(f"▶️ Grabando movimiento: {movimiento}")
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor()
         
         # Crear fecha completa
@@ -1397,8 +1400,9 @@ def grabar_movimiento(movimiento: MovimientoCreate, auth=Depends(get_current_use
         query = """
         INSERT INTO movimientos (
             MoSede, MoTiMo, MoTGas, MoRubr, MoFecha, MoDesc, 
-            MoImporte, MoCChica, MoUser, MoHecho
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            MoImporte, MoCChica, MoSaldoCaja, MoSaldoBanco, 
+            MoDona, MoPers, MoSedeDes, MoUser, MoHecho
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
         """
         
         valores = (
@@ -1410,6 +1414,11 @@ def grabar_movimiento(movimiento: MovimientoCreate, auth=Depends(get_current_use
             movimiento.descripcion,
             banco,
             caja,
+            movimiento.saldoCaja or 0,
+            movimiento.saldoBanco or 0,
+            movimiento.moDona or 0,        # ✅ NUEVO
+            movimiento.moPers or 0,        # ✅ NUEVO  
+            movimiento.moSedeDes or 0,    # ✅ NUEVO
             auth.get("id", 0)
         )
         
@@ -1428,7 +1437,661 @@ def grabar_movimiento(movimiento: MovimientoCreate, auth=Depends(get_current_use
         if conn:
             conn.close()            
 
-# Para comprobar si funciona el Servidor
+# ================== OBTENER CIERRES EXISTENTES ==================
+@app.get("/cierres/{anyo}")
+def obtener_cierres(anyo: int, sede: int = Query(...), auth=Depends(get_current_user), test_mode: bool = False):
+    """Obtener cierres mensuales de un año específico"""
+    conn = None
+    cursor = None
+    try:
+        # print(f"▶️ Obteniendo cierres: año={anyo}, sede={sede}")
+        conn = conectar_db(test_mode=test_mode)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        
+        # Buscar registros especiales de cierre en movimientos
+        query = """
+        SELECT MoID as id, MoCtas as mes_nombre, YEAR(MoFecha) as anyo,
+               MoSaldoCaja as saldoCaja, MoSaldoBanco as saldoBanco, MoHecho as fechaCierre
+        FROM movimientos 
+        WHERE MoSede = %s 
+        AND YEAR(MoFecha) = %s
+        AND MoDona = 9999
+        ORDER BY MoFecha
+        """
+        cursor.execute(query, (sede, anyo))
+        cierres = cursor.fetchall()
+        
+        print(f"✅ Encontrados {len(cierres)} cierres")
+        return {
+            "success": True,
+            "cierres": cierres
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR obteniendo cierres: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()            
+
+# ================== CREAR CIERRE TEMPORAL ==================
+@app.post("/crear-cierre-temporal")
+def crear_cierre_temporal(cierre: CierreCreateTemporal, auth=Depends(get_current_user), test_mode: bool = False):
+    """Crear cierre temporal - busca último registro del mes y crea cierre para revisión"""
+    print("🚀 ENDPOINT crear-cierre-temporal INICIADO")
+    print(f"📦 Datos recibidos: {cierre}")
+    conn = None
+    cursor = None
+    meses_nombres = {
+        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
+        5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto", 
+        9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre" }
+    try:
+        print(f"▶️ Creando cierre temporal: {cierre}")
+        conn = conectar_db(test_mode=test_mode)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+
+        # En la validación, buscar en el mes SIGUIENTE:
+        mes_a_verificar = cierre.mes + 1 if cierre.mes < 12 else 1
+        anyo_a_verificar = cierre.anyo if cierre.mes < 12 else cierre.anyo + 1
+
+        # Verificar que no existe ya un cierre para ese período
+        query_verificar = """
+        SELECT MoID FROM movimientos 
+        WHERE MoSede = %s 
+        AND YEAR(MoFecha) = %s 
+        AND MONTH(MoFecha) = %s
+        AND MoDona = 9999
+        """
+        cursor.execute(query_verificar, (cierre.sede, anyo_a_verificar, mes_a_verificar))
+        existe = cursor.fetchone()
+        
+        if existe:
+            raise HTTPException(status_code=400, detail=f"Ya existe un cierre para {cierre.mes}/{cierre.anyo}")
+        
+        # Buscar último movimiento del mes para obtener saldos
+        import calendar
+        ultimo_dia = calendar.monthrange(cierre.anyo, cierre.mes)[1]
+        fecha_fin = f"{cierre.anyo}-{cierre.mes:02d}-{ultimo_dia}"
+        
+        query_saldos = """
+        SELECT MoSaldoCaja, MoSaldoBanco
+        FROM movimientos 
+        WHERE MoSede = %s 
+        AND MoFecha <= %s
+        ORDER BY MoFecha DESC, MoID DESC
+        LIMIT 1
+        """
+        
+        cursor.execute(query_saldos, (cierre.sede, fecha_fin))
+        resultado_saldos = cursor.fetchone()
+        
+        if not resultado_saldos:
+            raise HTTPException(status_code=400, detail=f"No hay movimientos registrados hasta {cierre.mes}/{cierre.anyo}")
+        
+        saldo_caja = float(resultado_saldos['MoSaldoCaja'] or 0)
+        saldo_banco = float(resultado_saldos['MoSaldoBanco'] or 0)
+        
+        # Crear fecha del primer día del mes siguiente
+        mes_siguiente = cierre.mes + 1 if cierre.mes < 12 else 1
+        año_siguiente = cierre.anyo if cierre.mes < 12 else cierre.anyo + 1
+        fecha_cierre = f"{año_siguiente}-{mes_siguiente:02d}-01"
+        
+        # Descripción según especificación del PDF
+        descripcion = f"SALDO INICIAL DEL MES {cierre.mes:02d}/{cierre.anyo}"
+        mes_nombre = meses_nombres.get(cierre.mes, "Desconocido")
+        texto_cierre = f"{mes_nombre} {cierre.anyo}"
+
+        # Crear registro temporal en movimientos
+        query_crear = """
+        INSERT INTO movimientos (
+            MoDona, MoProy, MoSede, MoSedeDes, MoPers, MoCtas, MoTiMo, MoTGas, MoRubr,
+            MoFecha, MoDesc, MoImporte, MoCChica, MoUser, MoHecho, MoSaldoCaja, MoSaldoBanco
+        ) VALUES (9999, 0, %s, 0, 0, %s, 0, 0, 0, %s, %s, 0, 0, %s, NOW(), %s, %s)
+        """
+        
+        valores = (
+           cierre.sede, 
+           texto_cierre, 
+           fecha_cierre, 
+           descripcion,
+           cierre.usuario, 
+           saldo_caja, 
+           saldo_banco
+        )
+        
+        cursor.execute(query_crear, valores)
+        cierre_id = cursor.lastrowid
+        conn.commit()
+        
+        print(f"✅ Cierre temporal creado con ID: {cierre_id}")
+        
+        # Devolver datos del cierre para revisión
+        return {
+            "success": True,
+            "message": "Cierre temporal creado para revisión",
+            "cierre": {
+                "id": cierre_id,
+                "saldoCaja": saldo_caja,
+                "saldoBanco": saldo_banco,
+                "descripcion": descripcion,
+                "fecha": fecha_cierre
+            }
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR creando cierre temporal: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# ================== PARA CONFIRMAR UN CIERRE ==================
+@app.post("/confirmar-cierre/{cierre_id}")
+def confirmar_cierre(cierre_id: int, auth=Depends(get_current_user), test_mode: bool = False):
+    """Confirmar cierre temporal - no hace nada adicional, el registro ya está creado"""
+    conn = None
+    cursor = None
+    try:
+        print(f"▶️ Confirmando cierre ID: {cierre_id}")
+        conn = conectar_db(test_mode=test_mode)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        
+        # Verificar que el cierre existe y es un registro de cierre
+        query_verificar = """
+        SELECT MoID, MoDesc, MoSede, YEAR(MoFecha) as año, MONTH(MoFecha) as mes
+        FROM movimientos 
+        WHERE MoID = %s 
+        AND MoDona = 9999
+        """
+        
+        cursor.execute(query_verificar, (cierre_id,))
+        cierre = cursor.fetchone()
+        
+        if not cierre:
+            raise HTTPException(status_code=404, detail="Cierre no encontrado")
+        
+        print(f"✅ Cierre confirmado: {cierre['MoDesc']}")
+        
+        return {
+            "success": True,
+            "message": f"Cierre confirmado exitosamente"
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR confirmando cierre: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()            
+
+# ================== PARA ELIMINAR UN CIERRE ==================
+@app.delete("/eliminar-cierre/{cierre_id}")
+def eliminar_cierre(cierre_id: int, auth=Depends(get_current_user), test_mode: bool = False):
+   """Eliminar cierre mensual (solo si es el último)"""
+   conn = None
+   cursor = None
+   try:
+       print(f"▶️ Eliminando cierre ID: {cierre_id}")
+       conn = conectar_db(test_mode=test_mode)
+       cursor = conn.cursor(pymysql.cursors.DictCursor)
+       
+       # 1. Obtener IDFinal (último cierre)
+       query_ultimo = """
+       SELECT MoID AS IDFinal FROM movimientos 
+       WHERE MoDona = 9999 ORDER BY MoFecha DESC LIMIT 1
+       """
+       
+       cursor.execute(query_ultimo)
+       ultimo = cursor.fetchone()
+       
+       # 2. Verificar si es el último
+       if not ultimo or ultimo['IDFinal'] != cierre_id:
+           raise HTTPException(status_code=400, detail="Solo se puede eliminar el último cierre mensual")
+       
+       # 3. Eliminar el cierre
+       query_eliminar = "DELETE FROM movimientos WHERE MoID = %s"
+       cursor.execute(query_eliminar, (cierre_id,))
+       conn.commit()
+       
+       print("✅ Cierre eliminado correctamente")
+       return {"success": True, "message": "Cierre eliminado correctamente"}
+       
+   except Exception as e:
+       print(f"❌ ERROR eliminando cierre: {e}")
+       if conn:
+           conn.rollback()
+       raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+   finally:
+       if cursor:
+           cursor.close()
+       if conn:
+           conn.close()
+
+# ================== PARA RE-CALCULAR LOS SALDOS ==================
+@app.post("/recalcular-saldos")
+def recalcular_saldos(sede: int = Query(...), auth=Depends(get_current_user), test_mode: bool = False):
+    """Recalcular saldos desde el último cierre mensual"""
+    conn = None
+    cursor = None
+    try:
+        print(f"▶️ Iniciando recálculo de saldos para sede: {sede}")
+        conn = conectar_db(test_mode=test_mode)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        
+        # 1. Buscar último cierre mensual (saldo base)
+        print("🔍 Buscando último cierre mensual...")
+        query_ultimo_cierre = """
+        SELECT MoSaldoCaja, MoSaldoBanco, MoFecha 
+        FROM movimientos 
+        WHERE MoSede = %s AND MoDona = 9999 
+        ORDER BY MoFecha DESC LIMIT 1
+        """
+        
+        cursor.execute(query_ultimo_cierre, (sede,))
+        ultimo_cierre = cursor.fetchone()
+        
+        if not ultimo_cierre:
+            # Si no hay cierres, empezar desde el primer movimiento con saldos en 0
+            print("⚠️ No hay cierres previos, recalculando desde el inicio")
+            saldo_caja_inicial = 0
+            saldo_banco_inicial = 0
+            fecha_desde = '1900-01-01'  # Desde el inicio
+        else:
+            print(f"✅ Último cierre encontrado: {ultimo_cierre['MoFecha']}")
+            saldo_caja_inicial = float(ultimo_cierre['MoSaldoCaja'] or 0)
+            saldo_banco_inicial = float(ultimo_cierre['MoSaldoBanco'] or 0)
+            fecha_desde = ultimo_cierre['MoFecha']
+        
+        # 2. Obtener movimientos desde esa fecha (excluyendo cierres)
+        print(f"📊 Obteniendo movimientos desde: {fecha_desde}")
+        query_movimientos = """
+        SELECT MoID, MoCChica, MoImporte
+        FROM movimientos 
+        WHERE MoSede = %s 
+        AND MoFecha >= %s 
+        AND MoDona != 9999
+        ORDER BY MoFecha, MoID
+        """
+        
+        cursor.execute(query_movimientos, (sede, fecha_desde))
+        movimientos = cursor.fetchall()
+        
+        print(f"📝 Encontrados {len(movimientos)} movimientos para recalcular")
+        
+        if len(movimientos) == 0:
+            return {
+                "success": True,
+                "message": "No hay movimientos para recalcular",
+                "movimientos_actualizados": 0
+            }
+        
+        # 3. Recalcular con variables acumulativas
+        saldo_caja_acum = saldo_caja_inicial
+        saldo_banco_acum = saldo_banco_inicial
+        movimientos_actualizados = 0
+        
+        print("🔄 Iniciando recálculo...")
+        
+        for movimiento in movimientos:
+            # Acumular saldos
+            saldo_caja_acum += float(movimiento['MoCChica'] or 0)
+            saldo_banco_acum += float(movimiento['MoImporte'] or 0)
+            
+            # Actualizar registro
+            query_update = """
+            UPDATE movimientos 
+            SET MoSaldoCaja = %s, MoSaldoBanco = %s 
+            WHERE MoID = %s
+            """
+            
+            cursor.execute(query_update, (saldo_caja_acum, saldo_banco_acum, movimiento['MoID']))
+            movimientos_actualizados += 1
+            
+            if movimientos_actualizados % 100 == 0:  # Log cada 100 registros
+                print(f"📈 Procesados {movimientos_actualizados} movimientos...")
+        
+        # Confirmar cambios
+        conn.commit()
+        
+        print(f"✅ Recálculo completado: {movimientos_actualizados} movimientos actualizados")
+        
+        return {
+            "success": True,
+            "message": f"Recálculo completado exitosamente",
+            "movimientos_actualizados": movimientos_actualizados,
+            "saldo_final_caja": saldo_caja_acum,
+            "saldo_final_banco": saldo_banco_acum
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR en recálculo: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# ================== PARA VERIFICAR SI UN PERIODO YA ESTA CERRADO Y EVITAR MODIFICACIONES ==================
+@app.get("/verificar-periodo-cerrado")
+def verificar_periodo_cerrado(sede: int = Query(...), año: int = Query(...), mes: int = Query(...), auth=Depends(get_current_user), test_mode: bool = False):
+    """Verificar si un período está cerrado"""
+    conn = None
+    cursor = None
+    try:
+        conn = conectar_db(test_mode=test_mode)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        
+        # Buscar si existe un cierre para ese período
+        query = """
+        SELECT COUNT(*) as cantidad
+        FROM movimientos 
+        WHERE MoSede = %s 
+        AND YEAR(MoFecha) = %s 
+        AND MONTH(MoFecha) = %s
+        AND MoDona = 9999
+        """
+        
+        cursor.execute(query, (sede, año, mes))
+        resultado = cursor.fetchone()
+        
+        periodo_cerrado = resultado['cantidad'] > 0
+        
+        return {
+            "periodo_cerrado": periodo_cerrado,
+            "año": año,
+            "mes": mes
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# ================== PARA MODIFICAR UN REGISTRO DE MOVIMIENTOS ==================
+@app.put("/editar-movimiento/{movimiento_id}")
+def editar_movimiento(movimiento_id: int, movimiento: MovimientoCreate, auth=Depends(get_current_user), test_mode: bool = False):
+    """Editar un movimiento existente y recalcular saldos"""
+    conn = None
+    cursor = None
+    try:
+        print(f"▶️ Editando movimiento ID: {movimiento_id}")
+        print(f"📦 Datos nuevos: {movimiento}")
+        
+        conn = conectar_db(test_mode=test_mode)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        
+        # 1. Verificar que el movimiento existe y obtener datos originales
+        query_original = "SELECT * FROM movimientos WHERE MoID = %s"
+        cursor.execute(query_original, (movimiento_id,))
+        movimiento_original = cursor.fetchone()
+        
+        if not movimiento_original:
+            raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+        
+        # 2. Verificar que no es un registro de cierre
+        if movimiento_original['MoDona'] == 9999:
+            raise HTTPException(status_code=400, detail="No se pueden editar registros de cierre")
+        
+        # 3. Verificar período cerrado
+        año_mov = movimiento.año
+        mes_mov = movimiento.mes
+        
+        query_periodo_cerrado = """
+        SELECT COUNT(*) as cantidad
+        FROM movimientos 
+        WHERE MoSede = %s 
+        AND YEAR(MoFecha) = %s 
+        AND MONTH(MoFecha) = %s
+        AND MoDona = 9999
+        """
+        
+        cursor.execute(query_periodo_cerrado, (movimiento.sede, año_mov, mes_mov))
+        resultado_periodo = cursor.fetchone()
+        
+        if resultado_periodo['cantidad'] > 0:
+            raise HTTPException(status_code=400, detail=f"No se puede editar: el período {mes_mov}/{año_mov} está cerrado")
+        
+        # 4. Determinar valores según origen
+        nuevo_caja = movimiento.cChica if hasattr(movimiento, 'cChica') else (movimiento.importe if movimiento.origen == "caja" else 0)
+        nuevo_banco = movimiento.importe if movimiento.origen == "banco" else 0
+        
+        # 5. Crear nueva fecha
+        nueva_fecha = f"{movimiento.año}-{movimiento.mes:02d}-{movimiento.dia:02d}"
+        
+        # 6. Actualizar el movimiento
+        query_update = """
+        UPDATE movimientos 
+        SET MoFecha = %s, MoDesc = %s, MoImporte = %s, MoCChica = %s
+        WHERE MoID = %s
+        """
+        
+        cursor.execute(query_update, (
+            nueva_fecha,
+            movimiento.descripcion,
+            nuevo_banco,
+            nuevo_caja,
+            movimiento_id
+        ))
+        
+        conn.commit()
+        
+        # 7. Recalcular saldos desde el último cierre
+        print("🔄 Iniciando recálculo de saldos después de edición...")
+        
+        # Buscar último cierre
+        query_ultimo_cierre = """
+        SELECT MoSaldoCaja, MoSaldoBanco, MoFecha 
+        FROM movimientos 
+        WHERE MoSede = %s AND MoDona = 9999 
+        ORDER BY MoFecha DESC LIMIT 1
+        """
+        
+        cursor.execute(query_ultimo_cierre, (movimiento.sede,))
+        ultimo_cierre = cursor.fetchone()
+        
+        if ultimo_cierre:
+            saldo_caja_inicial = float(ultimo_cierre['MoSaldoCaja'] or 0)
+            saldo_banco_inicial = float(ultimo_cierre['MoSaldoBanco'] or 0)
+            fecha_desde = ultimo_cierre['MoFecha']
+        else:
+            saldo_caja_inicial = 0
+            saldo_banco_inicial = 0
+            fecha_desde = '1900-01-01'
+        
+        # Obtener movimientos a recalcular
+        query_movimientos = """
+        SELECT MoID, MoCChica, MoImporte
+        FROM movimientos 
+        WHERE MoSede = %s 
+        AND MoFecha >= %s 
+        AND MoDona != 9999
+        ORDER BY MoFecha, MoID
+        """
+        
+        cursor.execute(query_movimientos, (movimiento.sede, fecha_desde))
+        movimientos_recalcular = cursor.fetchall()
+        
+        # Recalcular saldos
+        saldo_caja_acum = saldo_caja_inicial
+        saldo_banco_acum = saldo_banco_inicial
+        
+        for mov in movimientos_recalcular:
+            saldo_caja_acum += float(mov['MoCChica'] or 0)
+            saldo_banco_acum += float(mov['MoImporte'] or 0)
+            
+            query_update_saldos = """
+            UPDATE movimientos 
+            SET MoSaldoCaja = %s, MoSaldoBanco = %s 
+            WHERE MoID = %s
+            """
+            
+            cursor.execute(query_update_saldos, (saldo_caja_acum, saldo_banco_acum, mov['MoID']))
+        
+        conn.commit()
+        
+        print(f"✅ Movimiento editado y saldos recalculados: {len(movimientos_recalcular)} registros")
+        
+        return {
+            "success": True,
+            "message": "Movimiento actualizado y saldos recalculados correctamente",
+            "movimientos_recalculados": len(movimientos_recalcular)
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR editando movimiento: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# ================== PARA ELIMINAR UN REGISTRO DE MOVIMIENTOS ==================
+@app.delete("/eliminar-movimiento/{movimiento_id}")
+def eliminar_movimiento(movimiento_id: int, auth=Depends(get_current_user), test_mode: bool = False):
+    """Eliminar un movimiento y recalcular saldos"""
+    conn = None
+    cursor = None
+    try:
+        print(f"▶️ Eliminando movimiento ID: {movimiento_id}")
+        
+        conn = conectar_db(test_mode=test_mode)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        
+        # 1. Verificar que el movimiento existe y obtener datos
+        query_movimiento = "SELECT * FROM movimientos WHERE MoID = %s"
+        cursor.execute(query_movimiento, (movimiento_id,))
+        movimiento = cursor.fetchone()
+        
+        if not movimiento:
+            raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+        
+        # 2. Verificar que no es un registro de cierre
+        if movimiento['MoDona'] == 9999:
+            raise HTTPException(status_code=400, detail="No se pueden eliminar registros de cierre")
+        
+        # 3. Verificar período cerrado
+        fecha_mov = movimiento['MoFecha']
+        año_mov = fecha_mov.year
+        mes_mov = fecha_mov.month
+        sede_mov = movimiento['MoSede']
+        
+        query_periodo_cerrado = """
+        SELECT COUNT(*) as cantidad
+        FROM movimientos 
+        WHERE MoSede = %s 
+        AND YEAR(MoFecha) = %s 
+        AND MONTH(MoFecha) = %s
+        AND MoDona = 9999
+        """
+        
+        cursor.execute(query_periodo_cerrado, (sede_mov, año_mov, mes_mov))
+        resultado_periodo = cursor.fetchone()
+        
+        if resultado_periodo['cantidad'] > 0:
+            raise HTTPException(status_code=400, detail=f"No se puede eliminar: el período {mes_mov}/{año_mov} está cerrado")
+        
+        # 4. Eliminar el movimiento
+        query_delete = "DELETE FROM movimientos WHERE MoID = %s"
+        cursor.execute(query_delete, (movimiento_id,))
+        
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Movimiento no encontrado para eliminar")
+        
+        conn.commit()
+        print(f"✅ Movimiento {movimiento_id} eliminado")
+        
+        # 5. Recalcular saldos desde el último cierre
+        print("🔄 Iniciando recálculo de saldos después de eliminación...")
+        
+        # Buscar último cierre
+        query_ultimo_cierre = """
+        SELECT MoSaldoCaja, MoSaldoBanco, MoFecha 
+        FROM movimientos 
+        WHERE MoSede = %s AND MoDona = 9999 
+        ORDER BY MoFecha DESC LIMIT 1
+        """
+        
+        cursor.execute(query_ultimo_cierre, (sede_mov,))
+        ultimo_cierre = cursor.fetchone()
+        
+        if ultimo_cierre:
+            saldo_caja_inicial = float(ultimo_cierre['MoSaldoCaja'] or 0)
+            saldo_banco_inicial = float(ultimo_cierre['MoSaldoBanco'] or 0)
+            fecha_desde = ultimo_cierre['MoFecha']
+        else:
+            saldo_caja_inicial = 0
+            saldo_banco_inicial = 0
+            fecha_desde = '1900-01-01'
+        
+        # Obtener movimientos a recalcular
+        query_movimientos = """
+        SELECT MoID, MoCChica, MoImporte
+        FROM movimientos 
+        WHERE MoSede = %s 
+        AND MoFecha >= %s 
+        AND MoDona != 9999
+        ORDER BY MoFecha, MoID
+        """
+        
+        cursor.execute(query_movimientos, (sede_mov, fecha_desde))
+        movimientos_recalcular = cursor.fetchall()
+        
+        # Recalcular saldos
+        saldo_caja_acum = saldo_caja_inicial
+        saldo_banco_acum = saldo_banco_inicial
+        
+        for mov in movimientos_recalcular:
+            saldo_caja_acum += float(mov['MoCChica'] or 0)
+            saldo_banco_acum += float(mov['MoImporte'] or 0)
+            
+            query_update_saldos = """
+            UPDATE movimientos 
+            SET MoSaldoCaja = %s, MoSaldoBanco = %s 
+            WHERE MoID = %s
+            """
+            
+            cursor.execute(query_update_saldos, (saldo_caja_acum, saldo_banco_acum, mov['MoID']))
+        
+        conn.commit()
+        
+        print(f"✅ Movimiento eliminado y saldos recalculados: {len(movimientos_recalcular)} registros")
+        
+        return {
+            "success": True,
+            "message": "Movimiento eliminado y saldos recalculados correctamente",
+            "movimientos_recalculados": len(movimientos_recalcular)
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR eliminando movimiento: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# ================== PARA COMPROBRA SI FUNCIONA EL SERVIDOR ==================
 @app.get("/")
 def inicio():
     return {"mensaje": "Servidor activo"}

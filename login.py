@@ -72,8 +72,8 @@ def get_current_user(
 
 # ---- Endpoint Login ----
 @router.post("/login")
-def login(datos: LoginInput):
-    conn = conectar_db()
+def login(datos: LoginInput, test_mode: bool = False):
+    conn = conectar_db(test_mode=test_mode)
     try:
         with conn.cursor() as cursor:
             cursor.execute("SELECT UsID, UsCod, UsNombre, UsNivel, UsSedes, UsKeyWeb FROM usuarios WHERE UsCod = %s", (datos.usuario,))
@@ -109,9 +109,9 @@ def login(datos: LoginInput):
 
 # Para seleccionar la Iglesia asignada al Usuario
 @router.get("/iglesias/{sede_ids}")
-def obtener_iglesias(sede_ids: str):
+def obtener_iglesias(sede_ids: str, test_mode: bool = False):
     try:
-        conexion = conectar_db()
+        conexion = conectar_db(test_mode=test_mode)
         cursor = conexion.cursor()
 
         if sede_ids == "999":
@@ -135,9 +135,9 @@ def obtener_iglesias(sede_ids: str):
 
 # ---- Endpoint Iglesias ----
 @router.get("/iglesias", response_model=List[Dict])
-def obtener_todas_iglesias(usuario: dict = Depends(verificar_token)):
+def obtener_todas_iglesias(test_mode: bool = False, usuario: dict = Depends(verificar_token)):
     try:
-        db = conectar_db()
+        db = conectar_db(test_mode=test_mode)
         sedes_str = usuario["UsSedes"]
         print("Usuario recibido:", usuario)
 
@@ -161,11 +161,11 @@ def obtener_todas_iglesias(usuario: dict = Depends(verificar_token)):
 
 # ---- Endpoint Me ----
 @router.get("/me")
-def me(usuario: Dict = Depends(get_current_user)) -> Dict:
+def me(test_mode: bool = False, usuario: Dict = Depends(get_current_user)) -> Dict:
     conn = None
     cursor = None
     try:
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor()
         cursor.execute(
             "SELECT UsCod, UsNombre, UsNivel, UsSedes FROM usuarios WHERE UsCod = %s",
@@ -189,11 +189,11 @@ def me(usuario: Dict = Depends(get_current_user)) -> Dict:
  
 # ---- Endpoint Register ----
 @router.post("/register")
-def registrar_usuario(datos: RegistroInput):
+def registrar_usuario(datos: RegistroInput, test_mode: bool = False):
     conn = None
     cursor = None
     try:
-        conn = conectar_db()
+        conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor()
         cursor.execute("SELECT 1 FROM usuarios WHERE UsCod = %s", (datos.usuario,))
         if cursor.fetchone():
