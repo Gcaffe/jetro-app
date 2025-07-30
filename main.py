@@ -143,11 +143,6 @@ class UsuarioCreate(UsuarioBase):
 class UsuarioUpdate(UsuarioBase):
     UsID: int
 
-# Función auxiliar para verificar permisos de administrador
-def verificar_admin(auth_user):
-    if auth_user.get("nivel") != 9:
-        raise HTTPException(status_code=403, detail="Solo los administradores pueden realizar esta acción")
-
 # ================== MODELOS PARA CARGA SEGUNDO NIVEL ==================
 class SegundoNivelResponse(BaseModel):
     MnuCod: int
@@ -193,6 +188,79 @@ class CierreCreateTemporal(BaseModel):
     mes: int
     usuario: str
 
+# ================== MODELOS PARA REPORTES ==================
+class ReporteIngresosGastosRequest(BaseModel):
+    codigoSede: int
+    fechaInicial: str
+    fechaFinal: str
+    soloDomingos: bool = False
+    tipoMovimiento: Optional[str] = None
+    formaPago: Optional[str] = None
+
+# Añadir después del modelo existente
+class ReporteDiezmosOfrendasRequest(BaseModel):
+    codigoSede: int
+    fechaInicial: str
+    fechaFinal: str
+    soloDomingos: bool = False
+
+# ================== MODELOS PARA DIEZMOS X PERSONA ==================
+class ReporteDiezmosPorPersonaRequest(BaseModel):
+    codigoSede: int
+    año: int
+
+# ============ FUNCION PARA CALCULAR TOTALES ==================
+def calcular_resumen_movimientos(movimientos):
+    """Función auxiliar para calcular totales"""
+    resumen = {
+        'totalCaja': 0,
+        'totalBanco': 0,
+        'totalGeneral': 0,
+        'totalIngresos': 0,
+        'totalGastos': 0,
+        'cantidadMovimientos': len(movimientos),
+        'saldoNeto': 0
+    }
+    
+    for mov in movimientos:
+        caja = float(mov.get('Caja', 0) or 0)
+        banco = float(mov.get('Banco', 0) or 0)
+        total = caja + banco
+        
+        resumen['totalCaja'] += caja
+        resumen['totalBanco'] += banco
+        resumen['totalGeneral'] += total
+        
+        if total > 0:
+            resumen['totalIngresos'] += total
+        else:
+            resumen['totalGastos'] += abs(total)
+    
+    resumen['saldoNeto'] = resumen['totalIngresos'] - resumen['totalGastos']
+    return resumen
+
+# ============ FUNCION PARA VERIFICAR PERMISOS DE ADMINISTRADOR ==================
+def verificar_admin(auth_user):
+    if auth_user.get("nivel") != 9:
+        raise HTTPException(status_code=403, detail="Solo los administradores pueden realizar esta acción")
+
+# ============ FUNCION PARA CONVERTIR TEXTO A MAYÚSCULAS ==================
+def convertir_campos_texto_mayusculas(modelo_data):
+    """Convierte campos de texto a mayúsculas, preservando números, fechas, etc."""
+    campos_a_convertir = [
+        'descripcion', 'MoDesc', 'fiNombres', 'fiApellidos', 'fiDirec1', 'fiDirec2', 
+        'fiCiudad', 'LoNombre', 'LoCalle', 'LoCiudad', 'LoProvincia', 'LoPais',
+        'UsNombre', 'fiComentario', 'fiNacidoEn', 'fiNacionalidad'
+    ]
+    
+    for campo in campos_a_convertir:
+        if hasattr(modelo_data, campo):
+            valor = getattr(modelo_data, campo)
+            if valor and isinstance(valor, str):
+                setattr(modelo_data, campo, valor.upper())
+    
+    return modelo_data
+
 # ================== ENDPOINTS PARA IGLESIAS ==================
 @app.get("/locales/{sede_ids}")
 def obtener_locales(sede_ids: str, auth=Depends(get_current_user), test_mode: bool = False):
@@ -227,51 +295,6 @@ def obtener_locales(sede_ids: str, auth=Depends(get_current_user), test_mode: bo
             cursor.close()
         if conn:
             conn.close()
-
-# ================== MODELOS PARA REPORTES ==================
-def calcular_resumen_movimientos(movimientos):
-    """Función auxiliar para calcular totales"""
-    resumen = {
-        'totalCaja': 0,
-        'totalBanco': 0,
-        'totalGeneral': 0,
-        'totalIngresos': 0,
-        'totalGastos': 0,
-        'cantidadMovimientos': len(movimientos),
-        'saldoNeto': 0
-    }
-    
-    for mov in movimientos:
-        caja = float(mov.get('Caja', 0) or 0)
-        banco = float(mov.get('Banco', 0) or 0)
-        total = caja + banco
-        
-        resumen['totalCaja'] += caja
-        resumen['totalBanco'] += banco
-        resumen['totalGeneral'] += total
-        
-        if total > 0:
-            resumen['totalIngresos'] += total
-        else:
-            resumen['totalGastos'] += abs(total)
-    
-    resumen['saldoNeto'] = resumen['totalIngresos'] - resumen['totalGastos']
-    return resumen
-
-class ReporteIngresosGastosRequest(BaseModel):
-    codigoSede: int
-    fechaInicial: str
-    fechaFinal: str
-    soloDomingos: bool = False
-    tipoMovimiento: Optional[str] = None
-    formaPago: Optional[str] = None
-
-# Añadir después del modelo existente
-class ReporteDiezmosOfrendasRequest(BaseModel):
-    codigoSede: int
-    fechaInicial: str
-    fechaFinal: str
-    soloDomingos: bool = False
 
 # ================== ENDPOINT PARA DETALLES DEL LOCAL ==================
 @app.get("/locales/detalle/{local_id}")
@@ -552,7 +575,7 @@ def obtener_nuevo_codigo_fiel(auth=Depends(get_current_user), test_mode: bool = 
 # ================== ENDPOINT PARA CREAR UN FIEL ==================
 @app.post("/fieles")
 def crear_fiel(fiel: FielCreate, auth=Depends(get_current_user), test_mode: bool = False):
-    """Crear un nuevo fiel"""
+    fiel = convertir_campos_texto_mayusculas(fiel)
     conn = None
     cursor = None
     try:
@@ -614,7 +637,7 @@ def crear_fiel(fiel: FielCreate, auth=Depends(get_current_user), test_mode: bool
 # ================== ENDPOINT PARA ACTUALIZAR FIEL ==================
 @app.put("/fieles/{fiel_id}")
 def actualizar_fiel(fiel_id: int, fiel: FielUpdate, auth=Depends(get_current_user), test_mode: bool = False):
-    """Actualizar un fiel existente"""
+    fiel = convertir_campos_texto_mayusculas(fiel)
     conn = None
     cursor = None
     try:
@@ -826,6 +849,7 @@ def obtener_nuevo_codigo_usuario(auth=Depends(get_current_user), test_mode: bool
 # ================== ENDPOINT PARA CREAR USUARIO ==================
 @app.post("/usuarios")
 def crear_usuario(usuario: UsuarioCreate, auth=Depends(get_current_user), test_mode: bool = False):
+    usuario = convertir_campos_texto_mayusculas(usuario)
     """Crear un nuevo usuario - Solo administradores"""
     conn = None
     cursor = None
@@ -888,10 +912,10 @@ def crear_usuario(usuario: UsuarioCreate, auth=Depends(get_current_user), test_m
         if conn:
             conn.close()
 
-# ================== ENDPOINT PARA ACTUALIZAR USUARIO ==================
+# ================== ENDPOINT PARA ACTUALIZAR USUARIO - SOLO ADMINISTRADORES==================
 @app.put("/usuarios/{usuario_id}")
 def actualizar_usuario(usuario_id: int, usuario: UsuarioUpdate, auth=Depends(get_current_user), test_mode: bool = False):
-    """Actualizar un usuario existente - Solo administradores"""
+    usuario = convertir_campos_texto_mayusculas(usuario)
     conn = None
     cursor = None
     try:
@@ -1381,21 +1405,24 @@ def obtener_movimientos(año: int, mes: int, sede: int, auth=Depends(get_current
 # ================== ENDPOINT PARA GRABAR DE MOVIMIENTOS ==================
 @app.post("/grabar-movimiento")
 def grabar_movimiento(movimiento: MovimientoCreate, auth=Depends(get_current_user), test_mode: bool = False):
-    """Grabar un nuevo movimiento"""
+    movimiento = convertir_campos_texto_mayusculas(movimiento)
     conn = None
     cursor = None
     try:
-        print(f"▶️ Grabando movimiento: {movimiento}")
         conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor()
         
         # Crear fecha completa
         fecha = f"{movimiento.año}-{movimiento.mes:02d}-{movimiento.dia:02d}"
-        
+
+        # Aplicar signo según tipo de operación
+        if movimiento.tipoOperacion in [200, 300]:  # Gastos y Traspasos
+            movimiento.importe = -movimiento.importe
+
         # Determinar valores según origen
         caja = movimiento.importe if movimiento.origen == "caja" else 0
         banco = movimiento.importe if movimiento.origen == "banco" else 0
-        
+
         # SQL para insertar movimiento
         query = """
         INSERT INTO movimientos (
@@ -1419,9 +1446,11 @@ def grabar_movimiento(movimiento: MovimientoCreate, auth=Depends(get_current_use
             movimiento.moDona or 0,        # ✅ NUEVO
             movimiento.moPers or 0,        # ✅ NUEVO  
             movimiento.moSedeDes or 0,    # ✅ NUEVO
-            auth.get("id", 0)
+            auth.get("sub", "XXX")
         )
-        
+
+        print(f"🔍 DEBUG - Valores para BD: caja={caja}, banco={banco}")
+
         cursor.execute(query, valores)
         conn.commit()
         
@@ -1792,7 +1821,12 @@ def verificar_periodo_cerrado(sede: int = Query(...), año: int = Query(...), me
     try:
         conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
-        
+
+        # Buscar cierre del mes SIGUIENTE
+        # Si queremos saber si Julio está cerrado, buscamos registro en Agosto
+        mes_siguiente = mes + 1 if mes < 12 else 1
+        año_siguiente = año if mes < 12 else año + 1
+
         # Buscar si existe un cierre para ese período
         query = """
         SELECT COUNT(*) as cantidad
@@ -1800,10 +1834,11 @@ def verificar_periodo_cerrado(sede: int = Query(...), año: int = Query(...), me
         WHERE MoSede = %s 
         AND YEAR(MoFecha) = %s 
         AND MONTH(MoFecha) = %s
+        AND DAY(MoFecha) = 1
         AND MoDona = 9999
         """
         
-        cursor.execute(query, (sede, año, mes))
+        cursor.execute(query, (sede, año_siguiente, mes_siguiente))
         resultado = cursor.fetchone()
         
         periodo_cerrado = resultado['cantidad'] > 0
@@ -1825,7 +1860,7 @@ def verificar_periodo_cerrado(sede: int = Query(...), año: int = Query(...), me
 # ================== PARA MODIFICAR UN REGISTRO DE MOVIMIENTOS ==================
 @app.put("/editar-movimiento/{movimiento_id}")
 def editar_movimiento(movimiento_id: int, movimiento: MovimientoCreate, auth=Depends(get_current_user), test_mode: bool = False):
-    """Editar un movimiento existente y recalcular saldos"""
+    movimiento = convertir_campos_texto_mayusculas(movimiento)
     conn = None
     cursor = None
     try:
@@ -2091,6 +2126,50 @@ def eliminar_movimiento(movimiento_id: int, auth=Depends(get_current_user), test
         if conn:
             conn.close()
 
+# ================== REPORTE DIEZMOS POR PERSONA ==================
+@app.post("/api/reportes/diezmos-por-persona")
+async def obtener_diezmos_por_persona(request: ReporteDiezmosPorPersonaRequest, test_mode: bool = False):
+    try:
+        connection = conectar_db(test_mode=test_mode)
+        cursor = connection.cursor(pymysql.cursors.DictCursor)
+        
+        sql_query = """
+        SELECT fiCod AS Codigo, 
+               CONCAT_WS(' ', fiNombres, fiApellidos) AS Nombres,
+               SUM(MoImporte + MoCChica) AS Total
+        FROM movimientos
+        LEFT JOIN fieles ON MoSede = FiSede AND MoPers = FiCod
+        WHERE MoSede = %s 
+          AND MoTiMo = 100 
+          AND MoTGas = 2 
+          AND MoPers > 0 
+          AND YEAR(MoFecha) = %s
+        GROUP BY MoPers, YEAR(MoFecha)
+        ORDER BY Nombres
+        """
+        
+        cursor.execute(sql_query, (request.codigoSede, request.año))
+        resultados = cursor.fetchall()
+        
+        # Calcular total general
+        total_general = sum(float(row.get('Total', 0) or 0) for row in resultados)
+        
+        cursor.close()
+        connection.close()
+        
+        return {
+            "success": True,
+            "diezmos": resultados,
+            "total_general": total_general,
+            "parametros": {
+                "sede": request.codigoSede,
+                "año": request.año
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    
 # ================== PARA COMPROBRA SI FUNCIONA EL SERVIDOR ==================
 @app.get("/")
 def inicio():
