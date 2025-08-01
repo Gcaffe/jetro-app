@@ -209,6 +209,18 @@ class ReporteDiezmosPorPersonaRequest(BaseModel):
     codigoSede: int
     año: int
 
+# ================== MODELO PARA TRANSPOSICIÓN DATOS ECONÓMICOS ==================
+class TransposicionRequest(BaseModel):
+    codigoSede: int
+    año: int
+    limpiarTabla: bool = True  # Para limpiar tabla antes de insertar
+
+# ================== MODELO PARA REPORTE ECONÓMICO FINAL ==================
+class ReporteEconomicoFinalRequest(BaseModel):
+    codigoSede: int
+    año: int
+    aplicarPostProceso: bool = True  # Para aplicar las reglas del PDF
+
 # ============ FUNCION PARA CALCULAR TOTALES ==================
 def calcular_resumen_movimientos(movimientos):
     """Función auxiliar para calcular totales"""
@@ -1406,6 +1418,16 @@ def obtener_movimientos(año: int, mes: int, sede: int, auth=Depends(get_current
 @app.post("/grabar-movimiento")
 def grabar_movimiento(movimiento: MovimientoCreate, auth=Depends(get_current_user), test_mode: bool = False):
     movimiento = convertir_campos_texto_mayusculas(movimiento)
+    # 🔍 PRINTS PARA DEBUG
+    print("=" * 50)
+    print("🔍 DEBUG - DATOS QUE LLEGAN DEL FRONTEND:")
+    print(f"   Tipo Operación: {movimiento.tipoOperacion}")
+    print(f"   Importe Original: {movimiento.importe}")
+    print(f"   Origen: {movimiento.origen}")
+    print(f"   Saldo Caja enviado: {movimiento.saldoCaja}")
+    print(f"   Saldo Banco enviado: {movimiento.saldoBanco}")
+    print("=" * 50)
+    
     conn = None
     cursor = None
     try:
@@ -1415,9 +1437,13 @@ def grabar_movimiento(movimiento: MovimientoCreate, auth=Depends(get_current_use
         # Crear fecha completa
         fecha = f"{movimiento.año}-{movimiento.mes:02d}-{movimiento.dia:02d}"
 
-        # Aplicar signo según tipo de operación
-        if movimiento.tipoOperacion in [200, 300]:  # Gastos y Traspasos
-            movimiento.importe = -movimiento.importe
+        # El frontend ya envía los valores con signo correcto, usar directamente
+        if movimiento.origen == "caja":
+            caja = movimiento.importe  # Ya viene con signo correcto desde frontend
+            banco = 0
+        else:  # banco
+            caja = 0
+            banco = movimiento.importe  # Ya viene con signo correcto desde frontend
 
         # Determinar valores según origen
         caja = movimiento.importe if movimiento.origen == "caja" else 0
@@ -1866,7 +1892,16 @@ def editar_movimiento(movimiento_id: int, movimiento: MovimientoCreate, auth=Dep
     try:
         print(f"▶️ Editando movimiento ID: {movimiento_id}")
         print(f"📦 Datos nuevos: {movimiento}")
-        
+
+        # Después de la línea: print(f"📦 Datos nuevos: {movimiento}")
+        print("🔍 DEBUG EDICIÓN:")
+        print(f"   Tiene cChica: {hasattr(movimiento, 'cChica')}")
+        print(f"   Importe: {movimiento.importe}")
+        print(f"   Origen: {movimiento.origen}")
+        print(f"   Sede: {movimiento.sede}")
+        print(f"   saldoCaja: {getattr(movimiento, 'saldoCaja', 'NO EXISTE')}")
+        print(f"   saldoBanco: {getattr(movimiento, 'saldoBanco', 'NO EXISTE')}")
+
         conn = conectar_db(test_mode=test_mode)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         
@@ -1882,10 +1917,18 @@ def editar_movimiento(movimiento_id: int, movimiento: MovimientoCreate, auth=Dep
         if movimiento_original['MoDona'] == 9999:
             raise HTTPException(status_code=400, detail="No se pueden editar registros de cierre")
         
-        # 3. Verificar período cerrado
-        año_mov = movimiento.año
-        mes_mov = movimiento.mes
-        
+        # 3. Verificar período cerrado# - VERIFICAR EL PERÍODO ORIGINAL:
+        # Obtener fecha del movimiento original
+        fecha_original = movimiento_original['MoFecha']
+        año_original = fecha_original.year
+        mes_original = fecha_original.month
+
+        # Buscar cierre del mes SIGUIENTE
+        # Si queremos saber si Julio está cerrado, buscamos registro en Agosto
+        mes_siguiente = mes_original + 1 if mes_original < 12 else 1
+        año_siguiente = año_original if mes_original < 12 else año_original + 1
+
+        # Verificar período cerrado usando la fecha ORIGINAL
         query_periodo_cerrado = """
         SELECT COUNT(*) as cantidad
         FROM movimientos 
@@ -1894,12 +1937,15 @@ def editar_movimiento(movimiento_id: int, movimiento: MovimientoCreate, auth=Dep
         AND MONTH(MoFecha) = %s
         AND MoDona = 9999
         """
-        
-        cursor.execute(query_periodo_cerrado, (movimiento.sede, año_mov, mes_mov))
+
+        cursor.execute(query_periodo_cerrado, (movimiento.sede, año_siguiente, mes_siguiente))
         resultado_periodo = cursor.fetchone()
-        
+
+        print(f"🔍 Resultado consulta cierre: {resultado_periodo}")
+        print(f"🔍 Cantidad encontrada: {resultado_periodo['cantidad']}")
+
         if resultado_periodo['cantidad'] > 0:
-            raise HTTPException(status_code=400, detail=f"No se puede editar: el período {mes_mov}/{año_mov} está cerrado")
+            raise HTTPException(status_code=400, detail=f"No se puede editar: el período original {mes_original}/{año_original} está cerrado")
         
         # 4. Determinar valores según origen
         nuevo_caja = movimiento.cChica if hasattr(movimiento, 'cChica') else (movimiento.importe if movimiento.origen == "caja" else 0)
@@ -2023,9 +2069,11 @@ def eliminar_movimiento(movimiento_id: int, auth=Depends(get_current_user), test
             raise HTTPException(status_code=400, detail="No se pueden eliminar registros de cierre")
         
         # 3. Verificar período cerrado
+        # Buscar cierre del mes SIGUIENTE
+        # Si queremos saber si Julio está cerrado, buscamos registro en Agosto
         fecha_mov = movimiento['MoFecha']
-        año_mov = fecha_mov.year
-        mes_mov = fecha_mov.month
+        mes_mov = fecha_mov.month + 1 if fecha_mov.month < 12 else 1
+        año_mov = fecha_mov.year if fecha_mov.month < 12 else fecha_mov.year + 1
         sede_mov = movimiento['MoSede']
         
         query_periodo_cerrado = """
@@ -2169,7 +2217,380 @@ async def obtener_diezmos_por_persona(request: ReporteDiezmosPorPersonaRequest, 
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+# ================== ENDPOINT PARA PROCESAR TRANSPOSICIÓN ==================
+@app.post("/api/reportes/procesar-transposicion")
+async def procesar_transposicion(request: TransposicionRequest, test_mode: bool = False):
+    print("=== INICIO TRANSPOSICIÓN DATOS ECONÓMICOS ===")
+    print(f"Datos recibidos: {request}")
     
+    conn = None
+    cursor = None
+    try:
+        connection = conectar_db(test_mode=test_mode)
+        cursor = connection.cursor(pymysql.cursors.DictCursor)
+        
+        # 1. Limpiar tabla ingresosygastos si se solicita
+        if request.limpiarTabla:
+            print("🧹 Limpiando tabla ingresosygastos...")
+            cursor.execute("DELETE FROM ingresosygastos WHERE IGSede = %s", (request.codigoSede,))
+            print("✅ Tabla limpiada")
+        
+        # 2. Obtener datos base (reutilizamos la consulta del primer endpoint)
+        print("📊 Obteniendo datos base...")
+        sql_datos = """
+            SELECT MoSede, MoTiMo, MoTGas, MoRubr, OpNombre, MONTH(MoFecha) AS Mes,
+                   IF(MoTiMo>0, SUM(MoImporte), MoSaldoBanco) AS Importe
+            FROM movimientos
+            LEFT JOIN opcionbtns ON OpTipoOp=MoTiMo AND OpCod=MoTGas
+            WHERE MoSede = %s AND YEAR(MoFecha) = %s
+            GROUP BY MoTiMo, MoTGas, YEAR(MoFecha), MONTH(MoFecha)
+            ORDER BY MoTiMo, MoTGas, MONTH(MoFecha)
+        """
+        
+        cursor.execute(sql_datos, (request.codigoSede, request.año))
+        datos_verticales = cursor.fetchall()
+        print(f"📝 Obtenidos {len(datos_verticales)} registros verticales")
+        
+        # 3. Procesar transposición (lógica similar al código Delphi del PDF)
+        print("🔄 Procesando transposición...")
+        
+        # Diccionario para acumular datos por grupo (TiMo + TGas)
+        grupos = {}
+        
+        for registro in datos_verticales:
+            sede = registro['MoSede']
+            tipo_mov = registro['MoTiMo']
+            tipo_gas = registro['MoTGas']
+            rubro = registro['MoRubr'] or 0
+            nombre = registro['OpNombre'] or 'SIN NOMBRE'
+            mes = registro['Mes']
+            importe = float(registro['Importe'] or 0)
+            
+            # Crear clave única para el grupo
+            clave_grupo = f"{tipo_mov}_{tipo_gas}"
+            
+            # Inicializar grupo si no existe
+            if clave_grupo not in grupos:
+                grupos[clave_grupo] = {
+                    'IGSede': sede,
+                    'IGTiMo': tipo_mov,
+                    'IGMoTGas': tipo_gas,
+                    'IGOpNom': nombre,
+                    'meses': [0.0] * 12,  # Array de 12 meses
+                    'IGTotAno': 0.0
+                }
+            
+            # Acumular importe en el mes correspondiente (mes 1-12, array 0-11)
+            if 1 <= mes <= 12:
+                grupos[clave_grupo]['meses'][mes - 1] += importe
+        
+        # 4. Calcular totales anuales y preparar datos para inserción
+        registros_insertar = []
+        for grupo in grupos.values():
+            # Calcular total anual (excepto para saldos anteriores)
+            if grupo['IGTiMo'] == 0:  # Saldos anteriores
+                grupo['IGTotAno'] = 0.0  # No sumar total anual
+            else:
+                grupo['IGTotAno'] = sum(grupo['meses'])  # Sumar normalmente
+            
+            # Preparar registro para inserción
+            registro = (
+                grupo['IGSede'],
+                grupo['IGTiMo'], 
+                grupo['IGMoTGas'],
+                grupo['IGOpNom'],
+                *grupo['meses'],  # Desempaquetar los 12 meses
+                grupo['IGTotAno']
+            )
+            registros_insertar.append(registro)
+        
+        # 5. Insertar en tabla ingresosygastos
+        print(f"💾 Insertando {len(registros_insertar)} registros en tabla...")
+        
+        sql_insert = """
+        INSERT INTO ingresosygastos (
+            IGSede, IGTiMo, IGMoTGas, IGOpNom,
+            IGM1, IGM2, IGM3, IGM4, IGM5, IGM6, 
+            IGM7, IGM8, IGM9, IGM10, IGM11, IGM12,
+            IGTotAno
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        cursor.executemany(sql_insert, registros_insertar)
+        connection.commit()
+        
+        print(f"✅ Transposición completada: {len(registros_insertar)} registros insertados")
+        
+        # 6. Obtener resultado final para verificación
+        cursor.execute("""
+            SELECT * FROM ingresosygastos 
+            WHERE IGSede = %s 
+            ORDER BY IGTiMo, IGMoTGas
+        """, (request.codigoSede,))
+        
+        resultado_final = cursor.fetchall()
+        
+        cursor.close()
+        connection.close()
+        
+        return {
+            "success": True,
+            "message": f"Transposición completada exitosamente",
+            "registros_procesados": len(datos_verticales),
+            "registros_insertados": len(registros_insertar),
+            "datos_transpuestos": resultado_final[:5],  # Primeros 5 registros para verificar
+            "total_registros_finales": len(resultado_final),
+            "parametros": {
+                "sede": request.codigoSede,
+                "año": request.año,
+                "tabla_limpiada": request.limpiarTabla
+            }
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR en transposición: {e}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# ================== ENDPOINT PARA REPORTE ECONÓMICO FINAL ==================
+@app.post("/api/reportes/listado-economico-anual")
+async def obtener_listado_economico_anual(request: ReporteEconomicoFinalRequest, test_mode: bool = False):
+    print("=== INICIO REPORTE ECONÓMICO FINAL ===")
+    print(f"Datos recibidos: {request}")
+    
+    conn = None
+    cursor = None
+    try:
+        connection = conectar_db(test_mode=test_mode)
+        cursor = connection.cursor(pymysql.cursors.DictCursor)
+        
+        # 1. Obtener datos base de la tabla ingresosygastos
+        print("📊 Obteniendo datos transpuestos...")
+        cursor.execute("""
+            SELECT * FROM ingresosygastos 
+            WHERE IGSede = %s 
+            ORDER BY IGTiMo, IGMoTGas
+        """, (request.codigoSede,))
+        
+        datos_base = cursor.fetchall()
+        print(f"📝 Obtenidos {len(datos_base)} registros base")
+        
+        if not datos_base:
+            return {
+                "success": False,
+                "message": "No hay datos en ingresosygastos. Ejecute primero la transposición.",
+                "reporte": []
+            }
+        
+        # 2. Aplicar post-procesamiento si se solicita
+        if request.aplicarPostProceso:
+            print("🔄 Aplicando post-procesamiento...")
+            datos_procesados = aplicar_post_procesamiento_v2(datos_base)
+        else:
+            datos_procesados = datos_base
+        
+        # 3. Obtener información de la sede
+        cursor.execute("SELECT LoNombre FROM locales WHERE LoCod = %s", (request.codigoSede,))
+        sede_info = cursor.fetchone()
+        nombre_sede = sede_info['LoNombre'] if sede_info else f"Sede {request.codigoSede}"
+        
+        cursor.close()
+        connection.close()
+        
+        return {
+            "success": True,
+            "reporte": datos_procesados,
+            "total_registros": len(datos_procesados),
+            "metadatos": {
+                "sede": request.codigoSede,
+                "nombre_sede": nombre_sede,
+                "año": request.año,
+                "post_procesamiento_aplicado": request.aplicarPostProceso,
+                "fecha_generacion": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR en reporte económico final: {e}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# ================== FUNCIÓN AUXILIAR PARA POST-PROCESAMIENTO V2 ==================
+def aplicar_post_procesamiento_v2(datos_base):
+    """Aplica las reglas de post-procesamiento según especificaciones corregidas"""
+    print("🔧 Iniciando post-procesamiento v2...")
+    
+    datos_procesados = []
+    diezmos_acumulado = None
+    
+    # 1. Procesar registros existentes
+    for registro in datos_base:
+        tipo_mov = registro['IGTiMo']
+        tipo_gas = registro['IGMoTGas']
+        
+        # Regla 1: Combinar Diezmos (100,2) + Ofrendas (100,3) → (100,2)
+        if tipo_mov == 100 and tipo_gas == 2:  # DIEZMOS
+            diezmos_acumulado = dict(registro)
+            diezmos_acumulado['IGOpNom'] = 'DIEZMOS + OFRENDAS POR BANCO'
+            continue
+        elif tipo_mov == 100 and tipo_gas == 3:  # OFRENDAS
+            if diezmos_acumulado:
+                # Sumar ofrendas a diezmos
+                for i in range(1, 13):
+                    col_mes = f'IGM{i}'
+                    diezmos_acumulado[col_mes] = float(diezmos_acumulado[col_mes] or 0) + float(registro[col_mes] or 0)
+                
+                # Recalcular total anual
+                diezmos_acumulado['IGTotAno'] = sum(float(diezmos_acumulado[f'IGM{i}'] or 0) for i in range(1, 13))
+                
+                # Agregar el registro combinado
+                datos_procesados.append(diezmos_acumulado)
+                diezmos_acumulado = None
+            # No agregar el registro de ofrendas por separado
+            continue
+        
+        # Regla 2: Convertir TRASPASO (300,30) → DIEZMOS DEL CULTO (100,2)
+        elif tipo_mov == 300 and tipo_gas == 30:
+            registro_convertido = dict(registro)
+            registro_convertido['IGTiMo'] = 100  # Cambiar a tipo ingresos
+            registro_convertido['IGMoTGas'] = 2  # Cambiar a gasto diezmos
+            registro_convertido['IGOpNom'] = 'DIEZMOS + OFRENDAS DEL CULTO'
+            datos_procesados.append(registro_convertido)
+            continue
+        
+        # Otros registros se mantienen igual
+        datos_procesados.append(dict(registro))
+    
+    # 2. Agregar diezmos si quedó sin procesar
+    if diezmos_acumulado:
+        datos_procesados.append(diezmos_acumulado)
+    
+    # 3. Ordenar por tipo de movimiento y gasto
+    datos_procesados.sort(key=lambda x: (x['IGTiMo'], x['IGMoTGas']))
+    
+    # 4. Agregar líneas de títulos y totales con códigos para ordenamiento
+    datos_con_titulos = agregar_titulos_y_totales_v2(datos_procesados)
+    
+    # 5. Ordenamiento final por tipo y gasto
+    datos_con_titulos.sort(key=lambda x: (x['IGTiMo'], x['IGMoTGas']))
+    
+    print(f"✅ Post-procesamiento v2 completado: {len(datos_con_titulos)} registros finales")
+    return datos_con_titulos
+
+# ================== FUNCIÓN PARA AGREGAR TÍTULOS Y TOTALES V2 ==================
+def agregar_titulos_y_totales_v2(datos_procesados):
+    """Agrega títulos y totales con códigos para ordenamiento correcto"""
+    resultado = []
+    
+    # Preparar totales
+    total_ingresos = {f'IGM{i}': 0.0 for i in range(1, 13)}
+    total_gastos = {f'IGM{i}': 0.0 for i in range(1, 13)}
+    
+    # Obtener sede para los registros
+    sede = datos_procesados[0]['IGSede'] if datos_procesados else 0
+    
+    # 1. SALDOS ANTERIORES (TiMo = 0) - Se mantienen al inicio
+    saldos_anteriores = [r for r in datos_procesados if r['IGTiMo'] == 0]
+    for saldo in saldos_anteriores:
+        resultado.append(saldo)
+    
+    # 2. TÍTULO: INGRESOS (TiMo = 99, TGas = 0)
+    resultado.append({
+        'IGSede': sede,
+        'IGTiMo': 99,
+        'IGMoTGas': 0,
+        'IGOpNom': 'INGRESOS',
+        **{f'IGM{i}': None for i in range(1, 13)},
+        'IGTotAno': None,
+        'es_titulo': True
+    })
+    
+    # 3. INGRESOS (TiMo = 100)
+    ingresos = [r for r in datos_procesados if r['IGTiMo'] == 100]
+    for ingreso in ingresos:
+        resultado.append(ingreso)
+        # Acumular para total
+        for i in range(1, 13):
+            col_mes = f'IGM{i}'
+            total_ingresos[col_mes] += float(ingreso[col_mes] or 0)
+    
+    # 4. TOTAL DE INGRESOS (TiMo = 199, TGas = 0)
+    resultado.append({
+        'IGSede': sede,
+        'IGTiMo': 199,
+        'IGMoTGas': 0,
+        'IGOpNom': 'TOTAL DE INGRESOS',
+        **total_ingresos,
+        'IGTotAno': sum(total_ingresos.values()),
+        'es_total': True
+    })
+    
+    # 5. TÍTULO: GASTOS Y TRANSFERENCIAS (TiMo = 299, TGas = 0)
+    resultado.append({
+        'IGSede': sede,
+        'IGTiMo': 299,
+        'IGMoTGas': 0,
+        'IGOpNom': 'GASTOS Y TRANSFERENCIAS',
+        **{f'IGM{i}': None for i in range(1, 13)},
+        'IGTotAno': None,
+        'es_titulo': True
+    })
+    
+    # 6. GASTOS Y TRANSFERENCIAS (TiMo = 200, 300)
+    gastos = [r for r in datos_procesados if r['IGTiMo'] in [200, 300]]
+    for gasto in gastos:
+        resultado.append(gasto)
+        # Acumular para total
+        for i in range(1, 13):
+            col_mes = f'IGM{i}'
+            total_gastos[col_mes] += float(gasto[col_mes] or 0)
+    
+    # 7. TOTAL DE GASTOS Y TRANSFERENCIAS (TiMo = 399, TGas = 0)
+    resultado.append({
+        'IGSede': sede,
+        'IGTiMo': 399,
+        'IGMoTGas': 0,
+        'IGOpNom': 'TOTAL DE GASTOS Y TRANSFERENCIAS',
+        **total_gastos,
+        'IGTotAno': sum(total_gastos.values()),
+        'es_total': True
+    })
+    
+    # 8. SALDOS AL FIN DE MES (TiMo = 999, TGas = 0)
+    saldos_finales = {}
+    for i in range(1, 13):
+        col_mes = f'IGM{i}'
+        saldo_inicial = saldos_anteriores[0][col_mes] if saldos_anteriores else 0
+        saldo_final = float(saldo_inicial or 0) + total_ingresos[col_mes] + total_gastos[col_mes]
+        saldos_finales[col_mes] = saldo_final
+    
+    resultado.append({
+        'IGSede': sede,
+        'IGTiMo': 999,
+        'IGMoTGas': 0,
+        'IGOpNom': 'SALDOS AL FIN DE MES',
+        **saldos_finales,
+        'IGTotAno': None,
+        'es_total': True
+    })
+    
+    return resultado
+
 # ================== PARA COMPROBRA SI FUNCIONA EL SERVIDOR ==================
 @app.get("/")
 def inicio():
