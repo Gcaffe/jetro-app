@@ -573,10 +573,11 @@ def obtener_nuevo_codigo_fiel(auth=Depends(get_current_user), test_mode: bool = 
     cursor = None
     try:
         conn = conectar_db(test_mode=test_mode)
-        cursor = conn.cursor()
+        cursor = conn.cursor(pymysql.cursors.DictCursor)  # ← Esto hace que sea diccionario
         cursor.execute("SELECT MAX(fiCod)+1 as nuevoCodigo FROM fieles")
         resultado = cursor.fetchone()
-        nuevo_codigo = resultado[0] if resultado[0] else 1001
+        nuevo_codigo = resultado.get('nuevoCodigo', 1001)  # ← Corregido
+        print(f"▶️ Nuevo código del fiel: {nuevo_codigo}")
         return {"nuevoCodigo": nuevo_codigo}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -2540,10 +2541,10 @@ def agregar_titulos_y_totales_v2(datos_procesados):
         'es_total': True
     })
     
-    # 5. TÍTULO: GASTOS Y TRANSFERENCIAS (TiMo = 299, TGas = 0)
+    # 5. TÍTULO: GASTOS Y TRANSFERENCIAS (TiMo = 200, TGas = 0) ← MOVIDO AQUÍ
     resultado.append({
         'IGSede': sede,
-        'IGTiMo': 299,
+        'IGTiMo': 200,
         'IGMoTGas': 0,
         'IGOpNom': 'GASTOS Y TRANSFERENCIAS',
         **{f'IGM{i}': None for i in range(1, 13)},
