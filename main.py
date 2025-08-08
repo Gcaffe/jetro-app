@@ -1420,14 +1420,14 @@ def obtener_movimientos(año: int, mes: int, sede: int, auth=Depends(get_current
 def grabar_movimiento(movimiento: MovimientoCreate, auth=Depends(get_current_user), test_mode: bool = False):
     movimiento = convertir_campos_texto_mayusculas(movimiento)
     # 🔍 PRINTS PARA DEBUG
-    print("=" * 50)
-    print("🔍 DEBUG - DATOS QUE LLEGAN DEL FRONTEND:")
-    print(f"   Tipo Operación: {movimiento.tipoOperacion}")
-    print(f"   Importe Original: {movimiento.importe}")
-    print(f"   Origen: {movimiento.origen}")
-    print(f"   Saldo Caja enviado: {movimiento.saldoCaja}")
-    print(f"   Saldo Banco enviado: {movimiento.saldoBanco}")
-    print("=" * 50)
+    # print("=" * 50)
+    # print("🔍 DEBUG - DATOS QUE LLEGAN DEL FRONTEND:")
+    # print(f"   Tipo Operación: {movimiento.tipoOperacion}")
+    # print(f"   Importe Original: {movimiento.importe}")
+    # print(f"   Origen: {movimiento.origen}")
+    # print(f"   Saldo Caja enviado: {movimiento.saldoCaja}")
+    # print(f"   Saldo Banco enviado: {movimiento.saldoBanco}")
+    # print("=" * 50)
     
     conn = None
     cursor = None
@@ -1480,7 +1480,84 @@ def grabar_movimiento(movimiento: MovimientoCreate, auth=Depends(get_current_use
 
         cursor.execute(query, valores)
         conn.commit()
-        
+
+        # 🔄 NUEVO: Verificar si necesita doble grabación para traspasos
+        if (movimiento.tipoOperacion == 300 and 
+            movimiento.segundoNivel == 30):
+            
+            if movimiento.tercerNivel == 41:
+                # Caso A: Caja a Banco
+                print("🔄 Creando registro adicional: Caja a Banco")
+                
+                query_adicional = """
+                INSERT INTO movimientos (
+                    MoSede, MoTiMo, MoTGas, MoRubr, MoFecha, MoDesc, 
+                    MoImporte, MoCChica, MoSaldoCaja, MoSaldoBanco, 
+                    MoDona, MoPers, MoSedeDes, MoUser, MoHecho
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                """
+                
+                # Nuevos saldos para el segundo registro
+                nuevo_saldo_caja = (movimiento.saldoCaja or 0) - caja  # Ya restó en el primer registro
+                nuevo_saldo_banco = nuevo_saldo_caja + caja  # Ahora suma al banco
+                
+                valores_adicionales = (
+                    movimiento.sede,
+                    movimiento.tipoOperacion,
+                    movimiento.segundoNivel,
+                    movimiento.tercerNivel,
+                    fecha,
+                    "DIEZMOS + OFRENDAS DEL CULTO",  # Nueva descripción
+                    -caja,  # MoImporte = +caja (lo que se restó de caja)
+                    0,     # MoCChica = 0
+                    nuevo_saldo_caja,
+                    nuevo_saldo_banco,
+                    movimiento.moDona or 0,
+                    movimiento.moPers or 0,
+                    movimiento.moSedeDes or 0,
+                    auth.get("sub", "XXX")
+                )
+                
+                cursor.execute(query_adicional, valores_adicionales)
+                
+            elif movimiento.tercerNivel == 42:
+                # Caso B: Banco a Caja
+                print("🔄 Creando registro adicional: Banco a Caja")
+                
+                query_adicional = """
+                INSERT INTO movimientos (
+                    MoSede, MoTiMo, MoTGas, MoRubr, MoFecha, MoDesc, 
+                    MoImporte, MoCChica, MoSaldoCaja, MoSaldoBanco, 
+                    MoDona, MoPers, MoSedeDes, MoUser, MoHecho
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                """
+                
+                # Nuevos saldos para el segundo registro
+                nuevo_saldo_banco = (movimiento.saldoBanco or 0) - banco  # Ya restó en el primer registro
+                nuevo_saldo_caja = nuevo_saldo_banco + banco  # Ahora suma a caja
+                
+                valores_adicionales = (
+                    movimiento.sede,
+                    movimiento.tipoOperacion,
+                    movimiento.segundoNivel,
+                    movimiento.tercerNivel,
+                    fecha,
+                    "BANCA A CAJA CHICA",  # Nueva descripción
+                    0,     # MoImporte = 0
+                    -banco, # MoCChica = +banco (lo que se restó del banco)
+                    nuevo_saldo_caja,
+                    nuevo_saldo_banco,
+                    movimiento.moDona or 0,
+                    movimiento.moPers or 0,
+                    movimiento.moSedeDes or 0,
+                    auth.get("sub", "XXX")
+                )
+                
+                cursor.execute(query_adicional, valores_adicionales)
+
+        # Commit final para ambos registros
+        conn.commit()  
+
         print("✅ Movimiento grabado correctamente")
         return {"success": True, "message": "Movimiento grabado correctamente"}
         
