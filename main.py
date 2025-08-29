@@ -221,6 +221,39 @@ class ReporteEconomicoFinalRequest(BaseModel):
     año: int
     aplicarPostProceso: bool = True  # Para aplicar las reglas del PDF
 
+# ================== MODELOS PARA GESTIÓN DE MENÚS ==================
+class MenuSedeItem(BaseModel):
+    """Modelo para agregar elemento al menú de sede"""
+    sede: int
+    tipo_operacion: int  # 100, 200, 300
+    codigo: int
+    nombre: str
+    sig_accion: str = ""
+    auxiliar: int = 0
+    peso: int = 1
+
+class RubroSedeItem(BaseModel):
+    """Modelo para agregar rubro a sede"""
+    sede: int
+    tip_gasto: int
+    codigo: int
+    nombre: str
+    orden: int = 1
+
+class TransferirElementoRequest(BaseModel):
+    """Modelo para transferir elementos entre menús"""
+    accion: str  # "agregar" o "eliminar"
+    tipo: str    # "boton" o "rubro"
+    elemento_id: int
+    sede: int
+    tipo_operacion: int = None  # Solo para botones
+
+class EliminarElementoRequest(BaseModel):
+    """Modelo para eliminar elementos del menú personalizado"""
+    tipo: str  # "boton" o "rubro"
+    elemento_id: int
+    sede: int
+
 # ============ FUNCION PARA CALCULAR TOTALES ==================
 def calcular_resumen_movimientos(movimientos):
     """Función auxiliar para calcular totales"""
@@ -2668,6 +2701,454 @@ def agregar_titulos_y_totales_v2(datos_procesados):
     })
     
     return resultado
+
+# ================== ENDPOINT PARA OPCIONES DE BOTONES DE MENUS USUARIO==================
+@app.get("/api/opciones-botones/{tipo_operacion}")
+def obtener_opciones_botones(tipo_operacion: int, auth=Depends(get_current_user), test_mode: bool = False):
+    """Obtener opciones de botones para un tipo de operación específico"""
+    conn = None
+    cursor = None
+    try:
+        print(f"▶️ Obteniendo opciones botones para tipo: {tipo_operacion}")
+        conn = conectar_db(test_mode=test_mode)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        
+        cursor.execute("""
+            SELECT OpID, OpTipoOp, OpCod, OpNombre, OpSigAccion, OpAuxiliar, OpPeso, OpUso
+            FROM opcionbtns 
+            WHERE OpActivo = 1 AND OpTipoOp = %s
+            ORDER BY OpPeso
+        """, (tipo_operacion,))
+        
+        opciones = cursor.fetchall()
+        print(f"✅ Encontradas {len(opciones)} opciones")
+        
+        return {
+            "success": True,
+            "opciones": opciones,
+            "tipo_operacion": tipo_operacion
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR obteniendo opciones botones: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# ================== ENDPOINT PARA RUBROS INGRESOS/GASTOS ==================
+@app.get("/api/rubros-generales")
+def obtener_rubros_generales(
+    sig_accion: str = Query(""), 
+    auxiliar: int = Query(0),
+    auth=Depends(get_current_user), 
+    test_mode: bool = False
+):
+    """Obtener rubros generales según lógica de OpSigAccion y OpAuxiliar"""
+    conn = None
+    cursor = None
+    try:
+        print(f"▶️ Obteniendo rubros: sig_accion='{sig_accion}', auxiliar={auxiliar}")
+        conn = conectar_db(test_mode=test_mode)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        
+        rubros = []
+        
+        # Aplicar lógica según especificaciones
+        # OpAuxiliar=0 y OpSigAccion=''
+        if auxiliar == 0 and sig_accion == '':
+            # Caso A: No mostrar nada
+            print("📝 Caso A: No se muestra nada")
+            rubros = []
+        # OpAuxiliar=0 y OpSigAccion='Nombre de tabla'    
+        elif auxiliar == 0 and sig_accion != '':
+            # Caso B: Mostrar datos de la Tabla
+            print(f"📝 Caso B: Consultando tabla '{sig_accion}'")
+            # Aquí necesitaríamos implementar consultas dinámicas según la tabla
+            # Por ahora, si es 'rubingas', consultamos esa tabla
+            if sig_accion == 'fieles':
+                cursor.execute("""
+                    SELECT fiID as RuID, fiCod as RuCod, 
+                    CONCAT(fiNombres, ' ', fiApellidos) as RuNombre,
+                    fiCod as RuOrden, 'Fiel' as RuUso, 1 as RuTipGasto
+                    FROM fieles 
+                    WHERE Situacion = 1
+                    ORDER BY fiApellidos, fiNombres
+                         """)
+                rubros = cursor.fetchall()
+            elif sig_accion == 'donantes':
+                cursor.execute("""
+                    SELECT DoID as RuID, DoCod as RuCod, 
+                    DoNombre as RuNombre, 1 as RuOrden, 'Donante' as RuUso, DoTipo as RuTipGasto
+                    FROM donantes 
+                    ORDER BY DoTipo, DoNombre
+                         """)
+                rubros = cursor.fetchall()
+            elif sig_accion == 'sedes':
+                cursor.execute("""
+                    SELECT LoID as RuID, LoCod as RuCod,
+                    LoNombre as RuNombre, 1 as RuOrden, 'Sedes' as RuUso, 1 as RuTipGasto
+                    FROM locales 
+                    WHERE LoSituacion = 1 ORDER BY LoCod;
+                         """)
+                rubros = cursor.fetchall()
+            elif sig_accion == 'personal':
+                cursor.execute("""
+                    SELECT PeID as RuID, PeCod as RuCod, 
+                    PeNombre as RuNombre, 1 as RuOrden, 'Personal' as RuUso, PeClase as RuTipGasto
+                    FROM personal WHERE PeNomina = 1 ORDER BY PeSede,PeClase;
+                         """)
+                rubros = cursor.fetchall()    
+        
+        # OpAuxiliar > 0 y OpSigAccion = 'Nombre de Tabla'    
+        elif auxiliar > 0:
+            # Caso C: SELECT * FROM rubingas WHERE RuCod = OpAuxiliar
+            print(f"📝 Caso C: Consultando rubingas con RuCod = {auxiliar}")
+            cursor.execute("""
+                SELECT RuID, RuTipGasto, RuCod, RuNombre, RuOrden, RuUso
+                FROM rubingas 
+                WHERE RuActivo = 1 AND RuTipGasto = %s
+                ORDER BY RuOrden
+            """, (auxiliar,))
+            rubros = cursor.fetchall()
+        
+        print(f"✅ Encontrados {len(rubros)} rubros")
+        
+        return {
+            "success": True,
+            "rubros": rubros,
+            "parametros": {
+                "sig_accion": sig_accion,
+                "auxiliar": auxiliar
+            }
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR obteniendo rubros generales: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# ================== ENDPOINT PARA MENÚ SEDE BOTONES ==================
+@app.get("/api/menu-sede-botones/{tipo_operacion}/{sede}")
+def obtener_menu_sede_botones(
+    tipo_operacion: int, 
+    sede: int, 
+    auth=Depends(get_current_user), 
+    test_mode: bool = False
+):
+    """Obtener menú personalizado de botones para una sede específica"""
+    conn = None
+    cursor = None
+    try:
+        print(f"▶️ Obteniendo menú sede: tipo={tipo_operacion}, sede={sede}")
+        conn = conectar_db(test_mode=test_mode)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        
+        cursor.execute("""
+            SELECT MnuID, MnuTipoOp, MnuSede, MnuCod, MnuNombre, MnuSigAccion, 
+                   MnuAuxiliar, MnuPeso
+            FROM mnusedesbtn 
+            WHERE MnuTipoOp = %s AND MnuSede = %s
+            ORDER BY MnuPeso
+        """, (tipo_operacion, sede))
+        
+        menu_sede = cursor.fetchall()
+        print(f"✅ Encontrados {len(menu_sede)} elementos en menú sede")
+        
+        return {
+            "success": True,
+            "menu_sede": menu_sede,
+            "tipo_operacion": tipo_operacion,
+            "sede": sede
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR obteniendo menú sede: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# ================== ENDPOINT PARA RUBROS SEDE B1==================
+@app.get("/api/rubros-sede/{sede}")
+def obtener_rubros_sede(
+    sede: int, 
+    tip_gasto: int = Query(0),
+    auth=Depends(get_current_user), 
+    test_mode: bool = False
+):
+    
+    """Obtener rubros personalizados de una sede específica"""
+    conn = None
+    cursor = None
+    try:
+        print(f"▶️ Obteniendo rubros sede: {sede}")
+        conn = conectar_db(test_mode=test_mode)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        
+        # Solo buscar si tip_gasto > 0
+        if tip_gasto > 0:
+            cursor.execute("""
+                SELECT RuID, RuSede, RuTipGasto, RuCod, RuNombre, RuOrden
+                FROM rubingassede 
+                WHERE RuSede = %s AND RuTipGasto = %s
+                ORDER BY RuTipGasto, RuOrden
+            """, (sede, tip_gasto))
+            rubros_sede = cursor.fetchall()
+        else:
+            rubros_sede = []  # No devolver nada si tip_gasto = 0
+
+        print(f"✅ Encontrados {len(rubros_sede)} rubros sede")
+        
+        return {
+            "success": True,
+            "rubros_sede": rubros_sede,
+            "sede": sede
+        }
+    except Exception as e:
+        print(f"❌ ERROR obteniendo rubros sede: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# ================== ENDPOINT PARA AGREGAR A MENÚ SEDE ==================
+@app.post("/api/agregar-menu-sede")
+def agregar_menu_sede(item: MenuSedeItem, auth=Depends(get_current_user), test_mode: bool = False):
+    """Agregar elemento al menú personalizado de sede"""
+    conn = None
+    cursor = None
+    try:
+        print(f"▶️ Agregando elemento al menú sede: {item}")
+        conn = conectar_db(test_mode=test_mode)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        
+        # Verificar si ya existe
+        cursor.execute("""
+            SELECT MnuID FROM mnusedesbtn 
+            WHERE MnuSede = %s AND MnuTipoOp = %s AND MnuCod = %s
+        """, (item.sede, item.tipo_operacion, item.codigo))
+        
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="El elemento ya existe en el menú de la sede")
+        
+        # Obtener próximo peso
+        cursor.execute("""
+            SELECT MAX(MnuPeso) as max_peso FROM mnusedesbtn 
+            WHERE MnuSede = %s AND MnuTipoOp = %s
+        """, (item.sede, item.tipo_operacion))
+        
+        resultado = cursor.fetchone()
+        nuevo_peso = (resultado['max_peso'] or 0) + 1
+        
+        # Insertar nuevo elemento
+        cursor.execute("""
+            INSERT INTO mnusedesbtn (MnuTipoOp, MnuSede, MnuCod, MnuNombre, 
+                                    MnuSigAccion, MnuAuxiliar, MnuPeso)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (item.tipo_operacion, item.sede, item.codigo, item.nombre,
+              item.sig_accion, item.auxiliar, nuevo_peso))
+        
+        conn.commit()
+        nuevo_id = cursor.lastrowid
+        
+        print(f"✅ Elemento agregado con ID: {nuevo_id}")
+        
+        return {
+            "success": True,
+            "message": "Elemento agregado al menú de sede",
+            "elemento_id": nuevo_id
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR agregando elemento: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# ================== ENDPOINT PARA ELIMINAR DE MENÚ SEDE ==================
+@app.delete("/api/eliminar-menu-sede/{elemento_id}")
+def eliminar_menu_sede(elemento_id: int, auth=Depends(get_current_user), test_mode: bool = False):
+    """Eliminar elemento del menú personalizado de sede"""
+    conn = None
+    cursor = None
+    try:
+        print(f"▶️ Eliminando elemento del menú sede: {elemento_id}")
+        conn = conectar_db(test_mode=test_mode)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        
+        # Verificar que existe
+        cursor.execute("SELECT * FROM mnusedesbtn WHERE MnuID = %s", (elemento_id,))
+        elemento = cursor.fetchone()
+        
+        if not elemento:
+            raise HTTPException(status_code=404, detail="Elemento no encontrado")
+        
+        # Eliminar
+        cursor.execute("DELETE FROM mnusedesbtn WHERE MnuID = %s", (elemento_id,))
+        conn.commit()
+        
+        print(f"✅ Elemento eliminado: {elemento['MnuNombre']}")
+        
+        return {
+            "success": True,
+            "message": f"Elemento '{elemento['MnuNombre']}' eliminado del menú"
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR eliminando elemento: {e}")
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# Actualizar peso/orden de menú personalizado
+@app.put("/api/actualizar-orden-menu-sede/{elemento_id}")
+async def actualizar_orden_menu_sede(elemento_id: int, request: dict, test_mode: bool = False):
+    conn = conectar_db(test_mode=test_mode)
+    cursor = conn.cursor(pymysql.cursors.DictCursor)
+    
+    try:
+        peso = request.get("peso", 0)
+        
+        cursor.execute("""
+            UPDATE mnusedesbtn 
+            SET mnuPeso = %s 
+            WHERE mnuID = %s
+        """, (peso, elemento_id))
+        
+        conn.commit()
+        
+        if cursor.rowcount > 0:
+            return {"message": "Peso actualizado correctamente"}
+        else:
+            raise HTTPException(status_code=404, detail="Elemento no encontrado")
+            
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error actualizando peso: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
+
+# Actualizar orden de rubro personalizado  
+@app.put("/api/actualizar-orden-rubro-sede/{rubro_id}")
+async def actualizar_orden_rubro_sede(rubro_id: int, request: dict, test_mode: bool = False):
+    conn = conectar_db(test_mode=test_mode)
+    cursor = conn.cursor(pymysql.cursors.DictCursor)
+    
+    try:
+        orden = request.get("orden", 0)
+        
+        cursor.execute("""
+            UPDATE rubingassede 
+            SET RuOrden = %s 
+            WHERE RuID = %s
+        """, (orden, rubro_id))
+        
+        conn.commit()
+        
+        if cursor.rowcount > 0:
+            return {"message": "Orden actualizado correctamente"}
+        else:
+            raise HTTPException(status_code=404, detail="Rubro no encontrado")
+            
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error actualizando orden: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
+
+# Agregar rubro a personalizados (AInf → BInf)
+@app.post("/api/agregar-rubro-sede")
+async def agregar_rubro_sede(request: dict, test_mode: bool = False):
+    conn = conectar_db(test_mode=test_mode)
+    cursor = conn.cursor(pymysql.cursors.DictCursor)
+    
+    try:
+        sede = request.get("sede")
+        rubro_cod = request.get("rubro_cod")
+        nombre = request.get("nombre")
+        tip_gasto = request.get("tip_gasto", 0)
+        orden = request.get("orden", 1)
+        
+        # Verificar si ya existe
+        cursor.execute("""
+            SELECT COUNT(*) as existe 
+            FROM rubingassede 
+            WHERE RuSede = %s AND RuTipGasto = %s AND RuCod = %s
+        """, (sede, tip_gasto, rubro_cod))
+        
+        resultado = cursor.fetchone()
+        if resultado['existe'] > 0:
+            raise HTTPException(status_code=400, detail="El rubro ya existe en personalizados")
+        
+        # Insertar nuevo rubro personalizado
+        cursor.execute("""
+            INSERT INTO rubingassede (RuSede, RuTipGasto, RuCod, RuNombre, RuOrden)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (sede, tip_gasto, rubro_cod, nombre, orden))
+        
+        conn.commit()
+        return {"message": "Rubro agregado correctamente"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error agregando rubro: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
+
+# Eliminar rubro de personalizados
+@app.delete("/api/eliminar-rubro-sede/{rubro_id}")
+async def eliminar_rubro_sede(rubro_id: int, test_mode: bool = False):
+    conn = conectar_db(test_mode=test_mode)
+    cursor = conn.cursor(pymysql.cursors.DictCursor)
+    
+    try:
+        # Necesitas obtener la sede del contexto - ajustar según tu lógica
+        sede_actual = 6  # Temporal - ajustar
+        
+        cursor.execute("""
+            DELETE FROM rubingassede 
+            WHERE RuID = %s
+        """, (rubro_id))
+        
+        conn.commit()
+        
+        if cursor.rowcount > 0:
+            return {"message": "Rubro eliminado correctamente"}
+        else:
+            raise HTTPException(status_code=404, detail="Rubro no encontrado")
+            
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error eliminando rubro: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
 
 # ================== PARA COMPROBRA SI FUNCIONA EL SERVIDOR ==================
 @app.get("/")
